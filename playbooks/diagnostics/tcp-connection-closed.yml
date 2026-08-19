@@ -1,0 +1,43 @@
+$schema: ../schemas/diagnostic.v1.json
+schema_version: diagnostic-procedure.v1
+id: tcp-connection-closed
+classification: tcp_closed
+version: 1
+name: TCP Connection Closed
+mode: diagnostic
+priority: 100
+matches:
+  patterns:
+    - '(?i)connection refused|connection closed|econnrefused|closed by remote'
+steps:
+  - id: module-details
+    tool: module_details
+    io_timeout_seconds: 5
+    requires: [module_id]
+  - id: module-state
+    tool: module_state
+    io_timeout_seconds: 5
+    depends_on: [module-details]
+    requires: [module_id]
+  - id: process-state
+    tool: core_loaded_processes
+    io_timeout_seconds: 5
+    depends_on: [module-details]
+    requires: [module_id]
+analysis:
+  hypotheses:
+    - Remote endpoint refused the connection.
+    - Incorrect host or port is configured.
+    - Remote service closed an idle session.
+  ruled_out:
+    - Long response processing is less likely than connection refusal or closure.
+  initial_confidence: 0.75
+  minimum_confidence: 0.65
+  escalate_below: 0.5
+  max_iterations: 2
+  fallback_tools: [system_details]
+guidance:
+  summary: Confirm endpoint host, port, listener state, and device service health.
+  operator_steps:
+    - Confirm the device listens on the configured port.
+    - Check whether the remote endpoint closes idle sessions.

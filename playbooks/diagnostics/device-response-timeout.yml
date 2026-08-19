@@ -1,0 +1,43 @@
+$schema: ../schemas/diagnostic.v1.json
+schema_version: diagnostic-procedure.v1
+id: device-response-timeout
+classification: response_timeout
+version: 1
+name: Device Response Timeout
+mode: diagnostic
+priority: 100
+matches:
+  patterns:
+    - '(?i)response timeout|no response|read timeout'
+steps:
+  - id: module-details
+    tool: module_details
+    io_timeout_seconds: 5
+    requires: [module_id]
+  - id: module-state
+    tool: module_state
+    io_timeout_seconds: 5
+    depends_on: [module-details]
+    requires: [module_id]
+  - id: error-logs
+    tool: debug_or_error_logs
+    io_timeout_seconds: 10
+    depends_on: [module-details]
+    requires: [module_id]
+analysis:
+  hypotheses:
+    - Device accepts commands but does not respond.
+    - Driver command queue is stalled.
+    - Protocol response parsing failed.
+  ruled_out:
+    - Raw TCP reachability may be working if commands are sent.
+  initial_confidence: 0.75
+  minimum_confidence: 0.65
+  escalate_below: 0.5
+  max_iterations: 2
+  fallback_tools: [core_loaded_processes]
+guidance:
+  summary: Review command-response logs and device protocol responsiveness.
+  operator_steps:
+    - Check whether the device accepts connections but stops responding.
+    - Review recent driver output for stalled commands.

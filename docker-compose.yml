@@ -1,0 +1,115 @@
+services:
+  db:
+    image: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ai_support_agent_dev
+    ports:
+      - 5432:5432
+
+  migrator:
+    build:
+      context: ${PWD}/spec/migration
+    container_name: migrator
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GITHUB_ACTION: ${GITHUB_ACTION:-}
+      PG_DATABASE_URL: postgresql://postgres:password@db:5432/ai_support_agent_dev
+
+  test:
+    image: placeos/service-spec-runner:${CRYSTAL_VERSION:-latest}
+    hostname: staff_api
+    volumes:
+      - ${PWD}/spec:/app/spec
+      - ${PWD}/src:/app/src
+      - ${PWD}/lib:/app/lib
+      - ${PWD}/shard.lock:/app/shard.lock
+      - ${PWD}/shard.override.yml:/app/shard.override.yml
+      - ${PWD}/shard.yml:/app/shard.yml.input
+      - ${PWD}/coverage:/app/coverage
+      - ${PWD}/playbooks:/app/playbooks
+      - ${PWD}/templates:/app/templates
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_healthy
+      rest-api:
+        condition: service_healthy
+      core:
+        condition: service_healthy
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      PG_DATABASE_URL: postgresql://postgres:password@db:5432/ai_support_agent_dev
+      PLACE_URI: http://rest-api:3000
+      PLACE_API_KEY: ai-support-agent-spec-key.spec-secret
+      SMTP_SERVER: mailpit
+      SMTP_PORT: 1025
+      SMTP_SECURE: NONE
+      SMTP_FROM_EMAIL: support-agent@example.test
+      SMTP_FROM_NAME: PlaceOS Support Agent
+      REPORT_EMAIL_TO: operator@example.test
+      GITHUB_ACTION: ${GITHUB_ACTION-}
+
+  redis:
+    image: eqalpha/keydb
+    healthcheck:
+      test: ["CMD", "keydb-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  core:
+    image: placeos/core:${PLACE_CORE_TAG:-nightly}
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SG_ENV: development
+      PG_DATABASE_URL: postgresql://postgres:password@db:5432/ai_support_agent_dev
+      REDIS_URL: redis://redis:6379
+
+  rest-api:
+    image: placeos/rest-api:${PLACE_REST_API_TAG:-nightly}
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      core:
+        condition: service_healthy
+    environment:
+      SG_ENV: development
+      PG_DATABASE_URL: postgresql://postgres:password@db:5432/ai_support_agent_dev
+      REDIS_URL: redis://redis:6379
+
+  mailpit:
+    image: axllent/mailpit
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+    ports:
+      - 8025:8025 # Web UI
+      - 1025:1025 # SMTP server
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1

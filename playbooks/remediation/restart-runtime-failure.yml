@@ -1,0 +1,17 @@
+$schema: ../schemas/remediation.v1.json
+schema_version: remediation-procedure.v1
+id: restart-runtime-failure
+version: 1
+name: Restart module after runtime failure
+mode: remediation
+priority: 100
+matches:
+  classifications: [runtime_error]
+  minimum_confidence: 0.65
+  required_context: [module_id]
+proposal:
+  action: restart-module
+  risk_level: medium
+  approval_required: true
+  policy_basis: Runtime-error evidence identifies a specific affected module; an operator must review the evidence before approving a restart.
+  verification: verification:module-runtime-recovery@1

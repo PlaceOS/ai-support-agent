@@ -1,0 +1,42 @@
+$schema: ../schemas/diagnostic.v1.json
+schema_version: diagnostic-procedure.v1
+id: http-authentication-failure
+classification: http_auth
+version: 1
+name: HTTP Authentication Failure
+mode: diagnostic
+priority: 100
+matches:
+  patterns:
+    - '(?i)401|403|unauthori[sz]ed|forbidden|invalid credentials?'
+steps:
+  - id: module-details
+    tool: module_details
+    io_timeout_seconds: 5
+    requires: [module_id]
+  - id: module-state
+    tool: module_state
+    io_timeout_seconds: 5
+    depends_on: [module-details]
+    requires: [module_id]
+  - id: system-details
+    tool: system_details
+    io_timeout_seconds: 5
+    requires: [system_id]
+analysis:
+  hypotheses:
+    - Configured credential is invalid or expired.
+    - Upstream service account was disabled.
+    - Token refresh failed.
+  ruled_out:
+    - Network transport failure is less likely than authentication failure.
+  initial_confidence: 0.75
+  minimum_confidence: 0.65
+  escalate_below: 0.5
+  max_iterations: 2
+  fallback_tools: [core_loaded_processes]
+guidance:
+  summary: Verify credentials, token expiry, and upstream account status.
+  operator_steps:
+    - Check the configured service credential reference or token expiry.
+    - Confirm the upstream account remains enabled.

@@ -1,0 +1,43 @@
+$schema: ../schemas/diagnostic.v1.json
+schema_version: diagnostic-procedure.v1
+id: tls-certificate-failure
+classification: tls_certificate
+version: 1
+name: TLS Certificate Failure
+mode: diagnostic
+priority: 100
+matches:
+  patterns:
+    - '(?i)certificate|x509|tls|ssl'
+steps:
+  - id: module-details
+    tool: module_details
+    io_timeout_seconds: 5
+    requires: [module_id]
+  - id: module-state
+    tool: module_state
+    io_timeout_seconds: 5
+    depends_on: [module-details]
+    requires: [module_id]
+  - id: process-state
+    tool: core_loaded_processes
+    io_timeout_seconds: 5
+    depends_on: [module-details]
+    requires: [module_id]
+analysis:
+  hypotheses:
+    - Certificate expired or its chain is not trusted.
+    - Configured hostname does not match the certificate.
+    - Upstream TLS configuration changed.
+  ruled_out:
+    - Credential rotation alone is unlikely to fix certificate validation.
+  initial_confidence: 0.75
+  minimum_confidence: 0.65
+  escalate_below: 0.5
+  max_iterations: 2
+  fallback_tools: [system_details]
+guidance:
+  summary: Inspect certificate expiry, chain, hostname, and trust configuration.
+  operator_steps:
+    - Inspect the upstream certificate chain and expiry.
+    - Confirm hostname and trust-store configuration.

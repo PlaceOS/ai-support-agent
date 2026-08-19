@@ -1,0 +1,12 @@
+$schema: ../schemas/escalation.v1.json
+schema_version: escalation-procedure.v1
+id: critical-incident
+version: 1
+name: Critical incident escalation
+mode: escalation
+priority: 100
+matches:
+  severities: [critical]
+owner_queue: placeos-critical-support
+response_sla_minutes: 15
+required_artefacts: [diagnostic_report, investigation_plan, evidence, agent_decision]

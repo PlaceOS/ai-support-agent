@@ -1,0 +1,18 @@
+$schema: ../schemas/maintenance.v1.json
+schema_version: maintenance-procedure.v1
+id: runtime-error-sweep
+version: 1
+name: Scheduled module runtime-error sweep
+mode: maintenance
+schedule:
+  cron: "0 */15 * * * *"
+  timezone: UTC
+scope:
+  kind: modules
+  filter: runtime_errors
+  limit: 500
+diagnostics:
+  - diagnostic:module-runtime-error@1
+deduplication_window_seconds: 900
+reporting:
+  deliver_reports: true

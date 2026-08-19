@@ -1,0 +1,41 @@
+$schema: ../schemas/diagnostic.v1.json
+schema_version: diagnostic-procedure.v1
+id: unknown-incident
+classification: unknown
+version: 1
+name: Unknown Failure
+mode: diagnostic
+priority: 0
+matches:
+  fallback: true
+steps:
+  - id: module-details
+    tool: module_details
+    io_timeout_seconds: 5
+    requires: [module_id]
+  - id: module-state
+    tool: module_state
+    io_timeout_seconds: 5
+    depends_on: [module-details]
+    requires: [module_id]
+  - id: process-state
+    tool: core_loaded_processes
+    io_timeout_seconds: 5
+    depends_on: [module-details]
+    requires: [module_id]
+analysis:
+  hypotheses:
+    - Available evidence is insufficient to classify the incident.
+    - Failure is outside the current diagnostic signatures.
+  ruled_out:
+    - No specific root cause has been ruled out.
+  initial_confidence: 0.2
+  minimum_confidence: 0.65
+  escalate_below: 0.5
+  max_iterations: 2
+  fallback_tools: [module_error_logs, system_details]
+guidance:
+  summary: Collect additional module state, logs, and operator context.
+  operator_steps:
+    - Collect module state, recent logs, and operator observations.
+    - Escalate if the alert remains active without sufficient evidence.

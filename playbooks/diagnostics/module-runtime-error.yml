@@ -1,0 +1,48 @@
+$schema: ../schemas/diagnostic.v1.json
+schema_version: diagnostic-procedure.v1
+id: module-runtime-error
+classification: runtime_error
+version: 1
+name: Runtime Error
+mode: diagnostic
+priority: 100
+matches:
+  patterns:
+    - '(?i)runtime[ _-]?error|exception|stacktrace|backtrace'
+steps:
+  - id: module-details
+    tool: module_details
+    io_timeout_seconds: 5
+    requires: [module_id]
+  - id: module-state
+    tool: module_state
+    io_timeout_seconds: 5
+    depends_on: [module-details]
+    requires: [module_id]
+  - id: runtime-logs
+    tool: module_error_logs
+    io_timeout_seconds: 10
+    depends_on: [module-details]
+    requires: [module_id]
+  - id: process-state
+    tool: core_loaded_processes
+    io_timeout_seconds: 5
+    depends_on: [module-details]
+    requires: [module_id]
+analysis:
+  hypotheses:
+    - Driver raised an exception.
+    - Recent deployment or settings change introduced a runtime fault.
+    - An external dependency returned unexpected data.
+  ruled_out:
+    - No module restart or driver reload was attempted during diagnosis.
+  initial_confidence: 0.75
+  minimum_confidence: 0.65
+  escalate_below: 0.5
+  max_iterations: 2
+  fallback_tools: [system_details]
+guidance:
+  summary: Review captured module error logs and recent driver or settings changes.
+  operator_steps:
+    - Review the most recent exception and stack trace.
+    - Compare recent driver deployment and settings changes.

@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://placeos.com/schemas/ai-support-agent/diagnostic.v1.json",
+  "title": "PlaceOS AI Support Agent diagnostic procedure",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "classification",
+    "version",
+    "name",
+    "mode",
+    "matches",
+    "steps",
+    "analysis",
+    "guidance"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "const": "diagnostic-procedure.v1" },
+    "id": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+    "classification": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "version": { "type": "integer", "minimum": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "mode": { "const": "diagnostic" },
+    "priority": { "type": "integer", "default": 0 },
+    "matches": { "$ref": "#/$defs/matches" },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/step" }
+    },
+    "analysis": { "$ref": "#/$defs/analysis" },
+    "guidance": { "$ref": "#/$defs/guidance" }
+  },
+  "$defs": {
+    "matches": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "patterns": { "type": "array", "items": { "type": "string", "minLength": 1 }, "default": [] },
+        "sources": {
+          "type": "array",
+          "items": { "enum": ["grafana", "webhook", "module_state", "scheduled"] },
+          "default": []
+        },
+        "required_context": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/context" },
+          "default": []
+        },
+        "fallback": { "type": "boolean", "default": false }
+      }
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "tool"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+        "tool": { "$ref": "#/$defs/tool" },
+        "io_timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 60, "default": 10 },
+        "depends_on": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "requires": { "type": "array", "items": { "$ref": "#/$defs/context" }, "default": [] }
+      }
+    },
+    "context": {
+      "enum": ["tenant_id", "system_id", "module_id", "module_name", "module_index"]
+    },
+    "tool": {
+      "enum": [
+        "module_details",
+        "module_state",
+        "module_error_logs",
+        "debug_or_error_logs",
+        "system_details",
+        "core_loaded_processes"
+      ]
+    },
+    "analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hypotheses", "ruled_out", "initial_confidence"],
+      "properties": {
+        "hypotheses": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "ruled_out": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "initial_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "minimum_confidence": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.65 },
+        "escalate_below": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.5 },
+        "max_iterations": { "type": "integer", "minimum": 0, "maximum": 5, "default": 2 },
+        "fallback_tools": { "type": "array", "items": { "$ref": "#/$defs/tool" }, "default": [] }
+      }
+    },
+    "guidance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "operator_steps"],
+      "properties": {
+        "summary": { "type": "string", "minLength": 1 },
+        "operator_steps": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+      }
+    }
+  }
+}

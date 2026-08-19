@@ -1,0 +1,12 @@
+.git
+.crystal
+.shards
+.vscode
+*.dwarf
+*.DS_Store
+bin
+coverage
+docs
+lib
+spec
+test

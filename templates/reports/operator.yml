@@ -1,0 +1,6 @@
+schema_version: report-template.v1
+id: operator-report
+version: 1
+subject: "[PlaceOS] {{severity}} incident {{incident_id}}"
+body: |
+  {{report}}

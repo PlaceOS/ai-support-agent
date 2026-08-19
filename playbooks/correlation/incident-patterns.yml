@@ -1,0 +1,25 @@
+$schema: ../schemas/correlation.v1.json
+schema_version: correlation-policy.v1
+id: incident-patterns
+version: 1
+name: Incident pattern detection
+default: true
+grouping:
+  dimensions: [tenant_id, system_id, module_id, classification]
+rules:
+  repeated_incidents:
+    enabled: true
+    window_seconds: 3600
+    threshold: 3
+  flapping:
+    enabled: true
+    window_seconds: 1800
+    threshold: 4
+  noisy_signals:
+    enabled: true
+    window_seconds: 600
+    threshold: 5
+trends:
+  default_window_seconds: 86400
+  maximum_window_seconds: 2678400
+  top_modules_limit: 10

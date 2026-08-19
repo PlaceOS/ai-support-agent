@@ -1,0 +1,17 @@
+$schema: ../schemas/remediation.v1.json
+schema_version: remediation-procedure.v1
+id: renew-tls-certificate
+version: 1
+name: Renew module TLS certificate
+mode: remediation
+priority: 100
+matches:
+  classifications: [tls_certificate]
+  minimum_confidence: 0.65
+  required_context: [module_id]
+proposal:
+  action: renew-tls-certificate
+  risk_level: high
+  approval_required: true
+  policy_basis: Certificate evidence identifies a specific module; certificate identity, ownership, and trust chain require operator validation.
+  verification: verification:module-connectivity-recovery@1

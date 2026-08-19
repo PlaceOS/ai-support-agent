@@ -1,0 +1,43 @@
+$schema: ../schemas/diagnostic.v1.json
+schema_version: diagnostic-procedure.v1
+id: tcp-connect-timeout
+classification: tcp_timeout
+version: 1
+name: TCP Connect Timeout
+mode: diagnostic
+priority: 100
+matches:
+  patterns:
+    - '(?i)connection timed out|connect timeout|tcp timeout|etimedout'
+steps:
+  - id: module-details
+    tool: module_details
+    io_timeout_seconds: 5
+    requires: [module_id]
+  - id: module-state
+    tool: module_state
+    io_timeout_seconds: 5
+    depends_on: [module-details]
+    requires: [module_id]
+  - id: process-state
+    tool: core_loaded_processes
+    io_timeout_seconds: 5
+    depends_on: [module-details]
+    requires: [module_id]
+analysis:
+  hypotheses:
+    - Device is offline or unreachable.
+    - Firewall or routing is blocking traffic.
+    - Target service is overloaded or powered down.
+  ruled_out:
+    - Application-level authentication is not the primary symptom.
+  initial_confidence: 0.75
+  minimum_confidence: 0.65
+  escalate_below: 0.5
+  max_iterations: 2
+  fallback_tools: [system_details]
+guidance:
+  summary: Check network reachability, routing, firewall, and device power state.
+  operator_steps:
+    - Check network reachability between PlaceOS Core and the device.
+    - Confirm routing, firewall, and device power state.

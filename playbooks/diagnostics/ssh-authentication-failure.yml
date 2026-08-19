@@ -1,0 +1,43 @@
+$schema: ../schemas/diagnostic.v1.json
+schema_version: diagnostic-procedure.v1
+id: ssh-authentication-failure
+classification: ssh_auth
+version: 1
+name: SSH Authentication Failure
+mode: diagnostic
+priority: 100
+matches:
+  patterns:
+    - '(?i)ssh.*(?:auth|permission denied)|permission denied.*ssh'
+steps:
+  - id: module-details
+    tool: module_details
+    io_timeout_seconds: 5
+    requires: [module_id]
+  - id: module-state
+    tool: module_state
+    io_timeout_seconds: 5
+    depends_on: [module-details]
+    requires: [module_id]
+  - id: process-state
+    tool: core_loaded_processes
+    io_timeout_seconds: 5
+    depends_on: [module-details]
+    requires: [module_id]
+analysis:
+  hypotheses:
+    - SSH credentials are invalid.
+    - Host-key expectation changed.
+    - Configured SSH authentication method is not permitted.
+  ruled_out:
+    - Generic TCP timeout is less likely than authentication or host-key failure.
+  initial_confidence: 0.75
+  minimum_confidence: 0.65
+  escalate_below: 0.5
+  max_iterations: 2
+  fallback_tools: [system_details]
+guidance:
+  summary: Verify SSH credential reference, host key, and permitted authentication methods.
+  operator_steps:
+    - Verify SSH credential metadata and host-key expectations.
+    - Confirm the target permits the configured authentication method.

@@ -1,0 +1,42 @@
+name: ai-support-agent
+version: 0.1.0
+crystal: ">= 1.20.0"
+
+targets:
+  ai-support-agent:
+    main: src/app.cr
+
+dependencies:
+  action-controller:
+    github: spider-gazelle/action-controller
+    version: ~> 7.2
+
+  placeos:
+    github: placeos/crystal-client
+    version: ~> 2.0
+
+  placeos-models:
+    github: placeos/models
+    version: ">= 9.92.1"
+
+  placeos-resource:
+    github: place-labs/resource
+
+  openai:
+    github: spider-gazelle/crystal-openai
+
+  email:
+    github: arcage/crystal-email
+    version: ~> 0.7.1
+
+  tasker:
+    github: spider-gazelle/tasker
+    version: ~> 3.0
+
+development_dependencies:
+  faker:
+    github: askn/faker
+
+  webmock:
+    github: manastech/webmock.cr
+    branch: master

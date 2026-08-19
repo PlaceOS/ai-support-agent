@@ -1,0 +1,44 @@
+$schema: ../schemas/workflow.v1.json
+schema_version: workflow.v1
+id: report-only-incident
+version: 1
+name: Report-only incident investigation
+entrypoint: diagnose
+default: true
+stages:
+  - id: diagnose
+    type: diagnostic
+    procedures:
+      - diagnostic:module-runtime-error@1
+      - diagnostic:http-authentication-failure@1
+      - diagnostic:tls-certificate-failure@1
+      - diagnostic:tcp-connect-timeout@1
+      - diagnostic:tcp-connection-closed@1
+      - diagnostic:device-response-timeout@1
+      - diagnostic:ssh-authentication-failure@1
+      - diagnostic:unknown-incident@1
+    transitions:
+      diagnosed: propose
+      insufficient_evidence: escalate
+  - id: propose
+    type: remediation
+    procedures:
+      - remediation:restart-runtime-failure@1
+      - remediation:update-http-credentials@1
+      - remediation:renew-tls-certificate@1
+    transitions:
+      proposal_created: report
+      no_proposal: report
+  - id: report
+    type: report
+    terminal: true
+  - id: escalate
+    type: escalation
+    procedures:
+      - escalation:critical-incident@1
+      - escalation:support-fallback@1
+    transitions:
+      escalated: escalated
+  - id: escalated
+    type: escalated
+    terminal: true

@@ -1,0 +1,12 @@
+$schema: ../schemas/escalation.v1.json
+schema_version: escalation-procedure.v1
+id: support-fallback
+version: 1
+name: Standard support escalation
+mode: escalation
+priority: 0
+matches:
+  fallback: true
+owner_queue: placeos-support
+response_sla_minutes: 60
+required_artefacts: [diagnostic_report, investigation_plan, evidence, agent_decision]
