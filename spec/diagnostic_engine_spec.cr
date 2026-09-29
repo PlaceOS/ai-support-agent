@@ -22,6 +22,35 @@ module AISupportAgent
       report.actions_taken.should eq ["report_only_no_remediation"]
     end
 
+    it "skips module and system lookups when the ids are blank" do
+      modules = WebMock.stub(:get, "http://place.test/api/engine/v2/modules/")
+        .to_return(body: "[]")
+      systems = WebMock.stub(:get, "http://place.test/api/engine/v2/systems/")
+        .to_return(body: "[]")
+
+      client = ::PlaceOS::Client.new("http://place.test", x_api_key: "test-key")
+      event = IncidentEvent.new(
+        source: IncidentSource::Webhook,
+        severity: IncidentSeverity::Error,
+        correlation_key: "blank-ids-engine",
+        payload: JSON.parse({error: "HTTP 401 Unauthorized from upstream"}.to_json),
+        system_id: "",
+        module_id: ""
+      )
+
+      report = DiagnosticEngine.new(PlaceOSContext.new(client), AIReporter.disabled)
+        .report_for(Incident.new("aisup-blank-ids", event, Time.utc))
+
+      modules.calls.should eq 0
+      systems.calls.should eq 0
+      report.module_id.should be_nil
+      report.evidence.map(&.source).should contain "diagnostic_context_missing"
+      report.evidence.map(&.source).should_not contain "placeos_rest_api"
+      tool_steps = report.investigation.select(&.name.starts_with?("tool:"))
+      tool_steps.should_not be_empty
+      tool_steps.all?(&.status.skipped?).should be_true
+    end
+
     it "classifies tcp connection failures" do
       report = AISupportAgent.diagnostic_report_for({error: "ECONNREFUSED while opening socket"}.to_json)
 

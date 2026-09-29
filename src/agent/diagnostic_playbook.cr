@@ -479,10 +479,10 @@ module AISupportAgent
 
     def self.context_present?(field : String, event : IncidentEvent) : Bool
       case field
-      when "tenant_id"    then !event.tenant_id.nil?
-      when "system_id"    then !event.system_id.nil?
-      when "module_id"    then !event.module_id.nil?
-      when "module_name"  then !event.module_name.nil?
+      when "tenant_id"    then !event.tenant_id.presence.nil?
+      when "system_id"    then !event.system_id.presence.nil?
+      when "module_id"    then !event.module_id.presence.nil?
+      when "module_name"  then !event.module_name.presence.nil?
       when "module_index" then !event.module_index.nil?
       else                     false
       end

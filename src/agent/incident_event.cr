@@ -31,12 +31,29 @@ module AISupportAgent
       @severity : IncidentSeverity,
       @correlation_key : String,
       @payload : JSON::Any,
-      @tenant_id : String? = nil,
-      @system_id : String? = nil,
-      @module_id : String? = nil,
-      @module_name : String? = nil,
+      tenant_id : String? = nil,
+      system_id : String? = nil,
+      module_id : String? = nil,
+      module_name : String? = nil,
       @module_index : Int32? = nil,
     )
+      @tenant_id = IncidentEvent.scope_value(tenant_id)
+      @system_id = IncidentEvent.scope_value(system_id)
+      @module_id = IncidentEvent.scope_value(module_id)
+      @module_name = IncidentEvent.scope_value(module_name)
+    end
+
+    # runs after JSON deserialisation, which does not go through `initialize`
+    def after_initialize
+      @tenant_id = IncidentEvent.scope_value(@tenant_id)
+      @system_id = IncidentEvent.scope_value(@system_id)
+      @module_id = IncidentEvent.scope_value(@module_id)
+      @module_name = IncidentEvent.scope_value(@module_name)
+    end
+
+    # blank and whitespace-only values come back as nil, anything else trimmed
+    def self.scope_value(value : String?) : String?
+      value.try(&.strip.presence)
     end
 
     def resolution? : Bool
