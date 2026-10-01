@@ -98,7 +98,18 @@ module AISupportAgent
         decision: decision
       )
 
-      if analysis = @ai_reporter.analyze?(report)
+      analysis = @ai_reporter.analyze(report)
+      if analysis.is_a?(AIReporter::Failure)
+        report = report.with_investigation_step(InvestigationStep.new(
+          name: "ai_structured_analysis",
+          status: InvestigationStepStatus::Failed,
+          summary: "AI analysis failed: #{analysis.reason}",
+          evidence_count: evidence.size
+        ))
+        analysis = nil
+      end
+
+      if analysis
         analysis = validated_analysis(analysis)
         analysis = apply_failure_confidence_ceiling(analysis, current_confidence, evidence, failed_tools)
         final_confidence = analysis.confidence || current_confidence
