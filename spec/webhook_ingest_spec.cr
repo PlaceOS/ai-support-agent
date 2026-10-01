@@ -43,5 +43,42 @@ module AISupportAgent
       event.module_name.should eq "Display"
       event.payload["message"].as_s.should eq "connection refused"
     end
+
+    it "treats blank scope values in generic payloads as missing" do
+      event = WebhookIngest.generic({
+        source:          "webhook",
+        severity:        "error",
+        tenant_id:       "",
+        system_id:       " ",
+        module_id:       "",
+        module_name:     "",
+        correlation_key: "",
+        payload:         {message: "HTTP 401 Unauthorized"},
+      }.to_json)
+
+      event.tenant_id.should be_nil
+      event.system_id.should be_nil
+      event.module_id.should be_nil
+      event.module_name.should be_nil
+      UUID.parse?(event.correlation_key).should_not be_nil
+    end
+
+    it "treats blank Grafana labels as missing" do
+      event = WebhookIngest.grafana({
+        status:       "firing",
+        groupKey:     "",
+        commonLabels: {
+          alertname:   "Display offline",
+          system_id:   " ",
+          module_id:   "",
+          module_name: "",
+        },
+      }.to_json)
+
+      event.system_id.should be_nil
+      event.module_id.should be_nil
+      event.module_name.should be_nil
+      event.correlation_key.should eq "Display offline"
+    end
   end
 end

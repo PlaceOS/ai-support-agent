@@ -67,6 +67,57 @@ module AISupportAgent
       evidence.compact_map(&.data).map(&.to_json).join("\n").should contain "Runtime exception line"
     end
 
+    it "makes no request when the module and system ids are blank" do
+      modules = WebMock.stub(:get, "http://place.test/api/engine/v2/modules/")
+        .to_return(body: [AISupportAgent.module_payload].to_json)
+      systems = WebMock.stub(:get, "http://place.test/api/engine/v2/systems/")
+        .to_return(body: "[]")
+
+      client = ::PlaceOS::Client.new("http://place.test", x_api_key: "test-key")
+      context = PlaceOSContext.new(client)
+      event = IncidentEvent.new(
+        source: IncidentSource::Webhook,
+        severity: IncidentSeverity::Error,
+        correlation_key: "blank-ids-context",
+        payload: JSON.parse({message: "HTTP 401"}.to_json),
+        system_id: " ",
+        module_id: ""
+      )
+
+      %w(module_details module_state module_error_logs system_details).each do |tool|
+        context.execute(tool, event, 5).evidence.should be_empty
+      end
+
+      modules.calls.should eq 0
+      systems.calls.should eq 0
+    end
+
+    it "sends an id as a single path segment" do
+      encoded = WebMock.stub(:get, "http://place.test/api/engine/v2/modules/mod-1%2F..%2F..%2Fusers")
+        .to_return(status: 404, body: "")
+      users = WebMock.stub(:get, "http://place.test/api/engine/v2/users")
+        .to_return(body: "[]")
+      raw = WebMock.stub(:get, "http://place.test/api/engine/v2/modules/mod-1/../../users")
+        .to_return(body: "[]")
+
+      client = ::PlaceOS::Client.new("http://place.test", x_api_key: "test-key")
+      context = PlaceOSContext.new(client)
+      event = IncidentEvent.new(
+        source: IncidentSource::Webhook,
+        severity: IncidentSeverity::Error,
+        correlation_key: "encoded-id-context",
+        payload: JSON.parse({message: "HTTP 401"}.to_json),
+        module_id: "mod-1/../../users"
+      )
+
+      result = context.execute("module_details", event, 5)
+
+      result.status.failed?.should be_true
+      encoded.calls.should eq 1
+      users.calls.should eq 0
+      raw.calls.should eq 0
+    end
+
     it "marks failed PlaceOS lookups as failed evidence" do
       WebMock.stub(:get, "http://place.test/api/engine/v2/modules/mod-runtime")
         .to_return(status: 503, body: "unavailable")

@@ -125,9 +125,9 @@ module AISupportAgent
 
     private def module_details(event : IncidentEvent, io_timeout_seconds : Int32) : Array(Evidence)
       return [] of Evidence unless client = @client
-      return [] of Evidence unless module_id = event.module_id
+      return [] of Evidence unless module_id = event.module_id.presence
 
-      details = rest_json(client, "/api/engine/v2/modules/#{module_id}", io_timeout_seconds)
+      details = rest_json(client, "/api/engine/v2/modules/#{URI.encode_path_segment(module_id)}", io_timeout_seconds)
       [
         Evidence.new(
           source: "placeos_rest_api",
@@ -139,9 +139,9 @@ module AISupportAgent
 
     private def module_state(event : IncidentEvent, io_timeout_seconds : Int32) : Array(Evidence)
       return [] of Evidence unless client = @client
-      return [] of Evidence unless module_id = event.module_id
+      return [] of Evidence unless module_id = event.module_id.presence
 
-      state = rest_json(client, "/api/engine/v2/modules/#{module_id}/state", io_timeout_seconds)
+      state = rest_json(client, "/api/engine/v2/modules/#{URI.encode_path_segment(module_id)}/state", io_timeout_seconds)
       [
         Evidence.new(
           source: "placeos_rest_api",
@@ -153,9 +153,9 @@ module AISupportAgent
 
     private def module_error_evidence(event : IncidentEvent, io_timeout_seconds : Int32) : Array(Evidence)
       return [] of Evidence unless client = @client
-      return [] of Evidence unless module_id = event.module_id
+      return [] of Evidence unless module_id = event.module_id.presence
 
-      logs = rest_json(client, "/api/engine/v2/modules/#{module_id}/error", io_timeout_seconds)
+      logs = rest_json(client, "/api/engine/v2/modules/#{URI.encode_path_segment(module_id)}/error", io_timeout_seconds)
       [
         Evidence.new(
           source: "placeos_rest_api",
@@ -167,9 +167,9 @@ module AISupportAgent
 
     private def system_evidence(event : IncidentEvent, io_timeout_seconds : Int32) : Array(Evidence)
       return [] of Evidence unless client = @client
-      return [] of Evidence unless system_id = event.system_id
+      return [] of Evidence unless system_id = event.system_id.presence
 
-      system = rest_json(client, "/api/engine/v2/systems/#{system_id}", io_timeout_seconds)
+      system = rest_json(client, "/api/engine/v2/systems/#{URI.encode_path_segment(system_id)}", io_timeout_seconds)
       [
         Evidence.new(
           source: "placeos_rest_api",
@@ -181,7 +181,7 @@ module AISupportAgent
 
     private def core_evidence(event : IncidentEvent, io_timeout_seconds : Int32) : Array(Evidence)
       return [] of Evidence unless client = @client
-      return [] of Evidence unless module_id = event.module_id
+      return [] of Evidence unless module_id = event.module_id.presence
 
       nodes = rest_json(client, "/api/engine/v2/cluster/", io_timeout_seconds).as_a
       matches = nodes.compact_map do |node|

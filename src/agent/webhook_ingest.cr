@@ -15,7 +15,7 @@ module AISupportAgent
         module_id: label(labels, "module_id"),
         module_name: label(labels, "module_name") || label(labels, "module"),
         module_index: label(labels, "module_index").try(&.to_i?),
-        correlation_key: object["groupKey"]?.try(&.as_s?) || label(labels, "alertname") || UUID.random.to_s,
+        correlation_key: text(object["groupKey"]?) || label(labels, "alertname") || UUID.random.to_s,
         payload: payload
       )
     end
@@ -32,7 +32,7 @@ module AISupportAgent
         module_id: object["module_id"]?.try(&.as_s?),
         module_name: object["module_name"]?.try(&.as_s?),
         module_index: object["module_index"]?.try(&.as_i?).try(&.to_i32),
-        correlation_key: object["correlation_key"]?.try(&.as_s?) || UUID.random.to_s,
+        correlation_key: text(object["correlation_key"]?) || UUID.random.to_s,
         payload: object["payload"]? || payload
       )
     end
@@ -46,7 +46,12 @@ module AISupportAgent
     end
 
     private def label(labels : Hash(String, JSON::Any), key : String) : String?
-      labels[key]?.try(&.as_s?)
+      text(labels[key]?)
+    end
+
+    # the string at `value`, or nil when it is missing, not a string, or blank
+    private def text(value : JSON::Any?) : String?
+      IncidentEvent.scope_value(value.try(&.as_s?))
     end
 
     private def grafana_severity(object : Hash(String, JSON::Any), labels : Hash(String, JSON::Any)) : IncidentSeverity

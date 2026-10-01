@@ -53,6 +53,29 @@ module AISupportAgent
       IncidentReport.from_json(fetched.body).incident_id.should eq report.incident_id
     end
 
+    it "raises no proposal for a webhook with a blank module id" do
+      created = client.post(
+        "/api/ai-support/v1/webhooks/generic",
+        body: {
+          source:          "webhook",
+          severity:        "error",
+          system_id:       "",
+          module_id:       "",
+          correlation_key: "generic:blank-module",
+          payload:         {message: "HTTP 401 Unauthorized from upstream"},
+        }.to_json,
+        headers: HTTP::Headers{"Content-Type" => "application/json"}
+      )
+
+      created.status_code.should eq 202
+      report = IncidentReport.from_json(created.body)
+      report.classification.http_auth?.should be_true
+      report.module_id.should be_nil
+      report.system_id.should be_nil
+      report.evidence.map(&.source).should_not contain "placeos_rest_api"
+      report.remediation_proposal.should be_nil
+    end
+
     it "exposes a markdown operator report artefact" do
       created = client.post(
         "/api/ai-support/v1/webhooks/generic",
