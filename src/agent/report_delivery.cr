@@ -108,13 +108,17 @@ module AISupportAgent
     getter timeout : Time::Span
     getter max_attempts : Int32
     getter retry_base : Time::Span
+    getter fallback_webhook_url : URI?
+    getter fallback_email_recipients : Array(String)
 
     def self.from_environment : ReportDeliveryConfig
       new(
         generic_webhook_url: REPORT_WEBHOOK_URL.try { |url| URI.parse(url) },
         email_recipients: REPORT_EMAIL_TO,
         smtp: SmtpSettings.from_environment,
-        template_id: REPORT_TEMPLATE_ID
+        template_id: REPORT_TEMPLATE_ID,
+        fallback_webhook_url: REPORT_FALLBACK_WEBHOOK_URL.try { |url| URI.parse(url) },
+        fallback_email_recipients: REPORT_FALLBACK_EMAIL_TO
       )
     end
 
@@ -126,6 +130,8 @@ module AISupportAgent
       @timeout : Time::Span = REPORT_DELIVERY_TIMEOUT_SECONDS.seconds,
       max_attempts : Int32 = REPORT_DELIVERY_MAX_ATTEMPTS,
       @retry_base : Time::Span = REPORT_DELIVERY_RETRY_BASE_SECONDS.seconds,
+      @fallback_webhook_url : URI? = nil,
+      @fallback_email_recipients : Array(String) = [] of String,
     )
       @max_attempts = max_attempts.clamp(1, 10)
     end
@@ -371,6 +377,7 @@ module AISupportAgent
   class ReportDelivery
     @email_sender : ReportEmailSender?
     @retrying = Set({String, String}).new
+    @fallback_started = Set(String).new
     @retry_lock = Mutex.new
 
     def initialize(
@@ -380,10 +387,12 @@ module AISupportAgent
       email_sender : ReportEmailSender? = nil,
     )
       @email_sender = email_sender || @config.smtp.try { |smtp| SmtpReportEmailSender.new(smtp, @config.timeout) }
+      warn_unconfigured_fallbacks
     end
 
     def configure(@config : ReportDeliveryConfig, email_sender : ReportEmailSender? = nil) : Nil
       @email_sender = email_sender || @config.smtp.try { |smtp| SmtpReportEmailSender.new(smtp, @config.timeout) }
+      warn_unconfigured_fallbacks
     end
 
     def deliver(report : IncidentReport) : Array(ReportDeliveryRecord)
@@ -409,27 +418,41 @@ module AISupportAgent
         end
       end
       channels(config).map do |channel|
-        record, retryable = attempt(report.incident_id, rendered, payload, channel, config, sender, 1)
-        if record.status.failed?
-          if retryable && config.max_attempts > 1
-            schedule_retries(report.incident_id, rendered, payload, channel, config, sender)
-          else
-            give_up(report.incident_id, channel)
-          end
-        end
-        record
+        deliver_channel(report.incident_id, rendered, payload, channel, config, sender)
       end
     end
 
-    private def channels(config : ReportDeliveryConfig) : Array(ReportDeliveryChannel)
-      destinations = [] of ReportDeliveryChannel
-      if url = config.generic_webhook_url
-        destinations << ReportDeliveryChannel.new("generic_webhook", url: url)
+    private def warn_unconfigured_fallbacks : Nil
+      if !@config.configured? && !channels(@config, fallback: true).empty?
+        AISupportAgent::Log.warn { "report fallback channels configured without a primary channel; delivery remains disabled" }
       end
-      unless config.email_recipients.empty?
-        destinations << ReportDeliveryChannel.new("email", recipients: config.email_recipients)
+    end
+
+    private def channels(config : ReportDeliveryConfig, fallback : Bool = false) : Array(ReportDeliveryChannel)
+      destinations = [] of ReportDeliveryChannel
+      url = fallback ? config.fallback_webhook_url : config.generic_webhook_url
+      recipients = fallback ? config.fallback_email_recipients : config.email_recipients
+      prefix = fallback ? "fallback_" : ""
+      if url
+        destinations << ReportDeliveryChannel.new("#{prefix}generic_webhook", url: url)
+      end
+      unless recipients.empty?
+        destinations << ReportDeliveryChannel.new("#{prefix}email", recipients: recipients)
       end
       destinations
+    end
+
+    private def deliver_channel(incident_id : String, rendered : RenderedReport, payload : String, channel : ReportDeliveryChannel,
+                                config : ReportDeliveryConfig, sender : ReportEmailSender?) : ReportDeliveryRecord
+      record, retryable = attempt(incident_id, rendered, payload, channel, config, sender, 1)
+      if record.status.failed?
+        if retryable && config.max_attempts > 1
+          schedule_retries(incident_id, rendered, payload, channel, config, sender)
+        else
+          give_up(incident_id, rendered, payload, channel, config, sender)
+        end
+      end
+      record
     end
 
     private def attempt(incident_id : String, rendered : RenderedReport, payload : String, channel : ReportDeliveryChannel,
@@ -482,7 +505,7 @@ module AISupportAgent
             record, retryable = attempt(incident_id, rendered, payload, channel, config, sender, number)
             break if record.status.delivered?
             unless retryable && number < config.max_attempts
-              give_up(incident_id, channel)
+              give_up(incident_id, rendered, payload, channel, config, sender)
               break
             end
           end
@@ -494,8 +517,20 @@ module AISupportAgent
       end
     end
 
-    private def give_up(incident_id : String, channel : ReportDeliveryChannel) : Nil
+    private def give_up(incident_id : String, rendered : RenderedReport, payload : String, channel : ReportDeliveryChannel,
+                        config : ReportDeliveryConfig, sender : ReportEmailSender?) : Nil
       AISupportAgent::Log.error { "#{channel.destination} report delivery giving up for #{incident_id}" }
+      return unless channel.destination.in?("generic_webhook", "email")
+      fallbacks = channels(config, fallback: true)
+      return if fallbacks.empty?
+      return unless @retry_lock.synchronize { @fallback_started.add?(incident_id) }
+      spawn do
+        fallbacks.each do |fallback|
+          deliver_channel(incident_id, rendered, payload, fallback, config, sender)
+        end
+      rescue error
+        AISupportAgent::Log.error(exception: error) { "report fallback delivery stopped for #{incident_id}" }
+      end
     end
 
     private def failure(incident_id : String, channel : ReportDeliveryChannel, config : ReportDeliveryConfig, number : Int32,

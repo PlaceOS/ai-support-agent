@@ -56,6 +56,13 @@ The first attempt on each configured channel stays inline. Connection, DNS, TLS 
 
 Pending retries are lost when the process stops. The escalation record keeps the first attempt's outcome even if a retry later succeeds.
 
+- `REPORT_FALLBACK_WEBHOOK_URL` = separate webhook used when a primary channel gives up
+- `REPORT_FALLBACK_EMAIL_TO` = comma-separated fallback recipients, using the same SMTP settings
+
+Every configured fallback channel receives the same rendered report once a primary gives up, including non-retryable transport or configuration failures. Fallback starts once per incident in the background, even if both primaries fail. Fallback attempts use the same timeout and retry policy, and their failures do not trigger further fallback. Records use `fallback_generic_webhook` and `fallback_email` destinations.
+
+Skipped deliveries (including maintenance suppression) and rendering failures do not trigger fallback. Fallback settings alone leave delivery disabled and produce a startup warning. The once-per-incident fallback guard is process-local, as are pending retry fibers.
+
 ### SMTP
 
 - `SMTP_SERVER` = SMTP server hostname. Required when `REPORT_EMAIL_TO` is configured.

@@ -90,6 +90,15 @@ module AISupportAgent
     end
   end
 
+  class PrimaryFailingReportEmailSender < ReportEmailSender
+    getter emails = [] of ReportEmail
+
+    def send(email : ReportEmail) : Nil
+      raise "primary SMTP offline" if email.recipients.includes?("primary@example.test")
+      @emails << email
+    end
+  end
+
   private def self.delivery_report : IncidentReport
     AISupportAgent.ingest(IncidentEvent.new(
       source: IncidentSource::Webhook,
@@ -561,6 +570,171 @@ module AISupportAgent
         config.write_timeout.should eq 4.seconds
         ReportDeliveryConfig.new(max_attempts: 0).max_attempts.should eq 1
         ReportDeliveryConfig.new(max_attempts: 100).max_attempts.should eq 10
+      end
+    end
+    describe "fallback channels" do
+      it "delivers both fallbacks in the background after primary retries give up" do
+        primary_payloads = [] of String
+        fallback_payloads = [] of String
+        WebMock.stub(:post, "https://hooks.example.test/reports").to_return do |request|
+          primary_payloads << request.body.to_s
+          HTTP::Client::Response.new(503)
+        end
+        WebMock.stub(:post, "https://fallback.example.test/reports").to_return do |request|
+          fallback_payloads << request.body.to_s
+          HTTP::Client::Response.new(200)
+        end
+        sender = RecordingReportEmailSender.new
+        store = ReportDeliveryStore.new
+        store.persist_with(PostgresIncidentRepository.new)
+        delivery = ReportDelivery.new(store, ReportDeliveryConfig.new(
+          generic_webhook_url: URI.parse("https://hooks.example.test/reports"),
+          fallback_webhook_url: URI.parse("https://fallback.example.test/reports"),
+          fallback_email_recipients: ["fallback@example.test"], max_attempts: 2, retry_base: 1.millisecond
+        ), email_sender: sender)
+        report = delivery_report
+        returned = delivery.deliver(report)
+        returned.size.should eq 1
+        returned.first.status.failed?.should be_true
+        fallback_payloads.should be_empty
+        records = await_delivery_count(store, 5).reject(&.status.skipped?)
+        records.map(&.destination).should eq ["generic_webhook", "generic_webhook", "fallback_generic_webhook", "fallback_email"]
+        records.last(2).all?(&.status.delivered?).should be_true
+        primary_payloads.size.should eq 2
+        fallback_payloads.should eq [primary_payloads.first]
+        payload = JSON.parse(fallback_payloads.first)
+        sender.emails.first.body.should eq payload["markdown"].as_s
+        sender.emails.first.subject.should eq payload["subject"].as_s
+        store.for_incident(report.incident_id).reject(&.status.skipped?).map(&.destination).should eq records.map(&.destination)
+      end
+
+      it "does not use fallbacks when a primary recovers on retry" do
+        calls = 0
+        fallback_calls = 0
+        WebMock.stub(:post, "https://hooks.example.test/reports").to_return do |_request|
+          calls += 1
+          HTTP::Client::Response.new(calls == 1 ? 503 : 200)
+        end
+        WebMock.stub(:post, "https://fallback.example.test/reports").to_return do |_request|
+          fallback_calls += 1
+          HTTP::Client::Response.new(200)
+        end
+        sender = RecordingReportEmailSender.new
+        store = ReportDeliveryStore.new
+        delivery = ReportDelivery.new(store, ReportDeliveryConfig.new(
+          generic_webhook_url: URI.parse("https://hooks.example.test/reports"),
+          fallback_webhook_url: URI.parse("https://fallback.example.test/reports"),
+          fallback_email_recipients: ["fallback@example.test"], retry_base: 1.millisecond
+        ), email_sender: sender)
+        delivery.deliver(delivery_report)
+        await_delivery_count(store, 2).last.status.delivered?.should be_true
+        stays_at_delivery_count(store, 2)
+        fallback_calls.should eq 0
+        sender.emails.should be_empty
+      end
+
+      it "starts fallbacks only once when both primaries give up" do
+        fallback_calls = 0
+        WebMock.stub(:post, "https://hooks.example.test/reports").to_return(status: 400)
+        WebMock.stub(:post, "https://fallback.example.test/reports").to_return do |_request|
+          fallback_calls += 1
+          HTTP::Client::Response.new(200)
+        end
+        sender = PrimaryFailingReportEmailSender.new
+        store = ReportDeliveryStore.new
+        delivery = ReportDelivery.new(store, ReportDeliveryConfig.new(
+          generic_webhook_url: URI.parse("https://hooks.example.test/reports"), email_recipients: ["primary@example.test"],
+          fallback_webhook_url: URI.parse("https://fallback.example.test/reports"),
+          fallback_email_recipients: ["fallback@example.test"], max_attempts: 1, retry_base: 1.millisecond
+        ), email_sender: sender)
+        returned = delivery.deliver(delivery_report)
+        returned.size.should eq 2
+        returned.all?(&.status.failed?).should be_true
+        fallback_calls.should eq 0
+        records = await_delivery_count(store, 4)
+        records.count(&.destination.==("fallback_generic_webhook")).should eq 1
+        records.count(&.destination.==("fallback_email")).should eq 1
+        stays_at_delivery_count(store, 4)
+        fallback_calls.should eq 1
+        sender.emails.size.should eq 1
+      end
+
+      it "retries a failing fallback and stops without triggering more fallbacks" do
+        fallback_calls = 0
+        WebMock.stub(:post, "https://hooks.example.test/reports").to_return(status: 400)
+        WebMock.stub(:post, "https://fallback.example.test/reports").to_return do |_request|
+          fallback_calls += 1
+          HTTP::Client::Response.new(503)
+        end
+        store = ReportDeliveryStore.new
+        delivery = ReportDelivery.new(store, ReportDeliveryConfig.new(
+          generic_webhook_url: URI.parse("https://hooks.example.test/reports"),
+          fallback_webhook_url: URI.parse("https://fallback.example.test/reports"), retry_base: 1.millisecond
+        ))
+        delivery.deliver(delivery_report)
+        records = await_delivery_count(store, 4)
+        records.last.error.not_nil!.should start_with "attempt 3 of 3, giving up: "
+        records.last(3).map(&.destination).should eq ["fallback_generic_webhook"] * 3
+        stays_at_delivery_count(store, 4)
+        fallback_calls.should eq 3
+      end
+
+      it "uses fallbacks for non-retryable missing SMTP configuration" do
+        WebMock.stub(:post, "https://fallback.example.test/reports").to_return(status: 200)
+        store = ReportDeliveryStore.new
+        delivery = ReportDelivery.new(store, ReportDeliveryConfig.new(
+          email_recipients: ["primary@example.test"],
+          fallback_webhook_url: URI.parse("https://fallback.example.test/reports"), retry_base: 1.millisecond
+        ))
+        returned = delivery.deliver(delivery_report)
+        returned.first.error.not_nil!.should contain "not retryable: SMTP is not configured"
+        records = await_delivery_count(store, 2)
+        records.last.destination.should eq "fallback_generic_webhook"
+        records.last.status.delivered?.should be_true
+        stays_at_delivery_count(store, 2)
+      end
+
+      it "does not use fallbacks for a rendering failure" do
+        sender = RecordingReportEmailSender.new
+        store = ReportDeliveryStore.new
+        delivery = ReportDelivery.new(store, ReportDeliveryConfig.new(
+          generic_webhook_url: URI.parse("https://hooks.example.test/reports"), template_id: "missing",
+          fallback_webhook_url: URI.parse("https://fallback.example.test/reports"),
+          fallback_email_recipients: ["fallback@example.test"], retry_base: 1.millisecond
+        ), email_sender: sender)
+        delivery.deliver(delivery_report).first.error.not_nil!.should contain "report template not found"
+        stays_at_delivery_count(store, 1)
+        sender.emails.should be_empty
+      end
+
+      it "leaves delivery disabled when only fallbacks are configured" do
+        sender = RecordingReportEmailSender.new
+        store = ReportDeliveryStore.new
+        config = ReportDeliveryConfig.new(
+          fallback_webhook_url: URI.parse("https://fallback.example.test/reports"), fallback_email_recipients: ["fallback@example.test"]
+        )
+        config.configured?.should be_false
+        delivery = ReportDelivery.new(store, config, email_sender: sender)
+        delivery.deliver(delivery_report).first.status.skipped?.should be_true
+        stays_at_delivery_count(store, 1)
+        sender.emails.should be_empty
+      end
+
+      it "does not use fallbacks when maintenance disables delivery" do
+        sender = RecordingReportEmailSender.new
+        AISupportAgent.delivery.configure(ReportDeliveryConfig.new(
+          generic_webhook_url: URI.parse("https://hooks.example.test/reports"),
+          fallback_webhook_url: URI.parse("https://fallback.example.test/reports"), fallback_email_recipients: ["fallback@example.test"]
+        ), sender)
+        report = AISupportAgent.ingest(IncidentEvent.new(
+          source: IncidentSource::Webhook, severity: IncidentSeverity::Error,
+          correlation_key: "delivery:maintenance", payload: JSON.parse({message: "runtime error"}.to_json), module_id: "mod-delivery"
+        ), deliver_report: false)
+        stays_at_delivery_count(AISupportAgent.deliveries, 1)
+        record = AISupportAgent.deliveries.for_incident(report.incident_id).first
+        record.status.skipped?.should be_true
+        record.destination.should eq "maintenance_policy"
+        sender.emails.should be_empty
       end
     end
   end
