@@ -48,6 +48,14 @@ User authentication can be used instead of `PLACE_API_KEY`. All of the following
 - `REPORT_WEBHOOK_URL` = outbound webhook URL for generated reports
 - `REPORT_EMAIL_TO` = comma-separated email recipients. Enables email delivery when SMTP is configured.
 
+- `REPORT_DELIVERY_TIMEOUT_SECONDS` = webhook connect/read and SMTP DNS/connect/read/write timeout, clamped to 1-120 seconds (default: `10`)
+- `REPORT_DELIVERY_MAX_ATTEMPTS` = attempts per channel, clamped to 1-10 (default: `3`). Set to `1` to disable retries.
+- `REPORT_DELIVERY_RETRY_BASE_SECONDS` = first retry delay, clamped to 1-3600 seconds (default: `30`). Subsequent delays double: 30s, 60s, etc.
+
+The first attempt on each configured channel stays inline. Connection, DNS, TLS and timeout failures, HTTP 408/425/429 and 5xx responses retry in background fibers. Other HTTP responses, configuration errors and rendering errors do not retry. Every attempt is recorded separately.
+
+Pending retries are lost when the process stops. The escalation record keeps the first attempt's outcome even if a retry later succeeds.
+
 ### SMTP
 
 - `SMTP_SERVER` = SMTP server hostname. Required when `REPORT_EMAIL_TO` is configured.

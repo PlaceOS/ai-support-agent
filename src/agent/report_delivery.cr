@@ -83,8 +83,13 @@ module AISupportAgent
       end
     end
 
-    def client_config : EMail::Client::Config
+    def client_config(timeout : Time::Span = REPORT_DELIVERY_TIMEOUT_SECONDS.seconds) : EMail::Client::Config
       config = EMail::Client::Config.new(host, port, helo_domain: helo_domain)
+      seconds = timeout.total_seconds.ceil.to_i.clamp(1, 120)
+      config.dns_timeout = seconds
+      config.connect_timeout = seconds
+      config.read_timeout = seconds
+      config.write_timeout = seconds
       config.use_tls(tls_mode)
       if username = self.username
         if password = self.password
@@ -100,6 +105,9 @@ module AISupportAgent
     getter email_recipients : Array(String)
     getter smtp : SmtpSettings?
     getter template_id : String
+    getter timeout : Time::Span
+    getter max_attempts : Int32
+    getter retry_base : Time::Span
 
     def self.from_environment : ReportDeliveryConfig
       new(
@@ -115,7 +123,11 @@ module AISupportAgent
       @email_recipients : Array(String) = [] of String,
       @smtp : SmtpSettings? = nil,
       @template_id : String = "operator-report",
+      @timeout : Time::Span = REPORT_DELIVERY_TIMEOUT_SECONDS.seconds,
+      max_attempts : Int32 = REPORT_DELIVERY_MAX_ATTEMPTS,
+      @retry_base : Time::Span = REPORT_DELIVERY_RETRY_BASE_SECONDS.seconds,
     )
+      @max_attempts = max_attempts.clamp(1, 10)
     end
 
     def configured? : Bool
@@ -274,7 +286,7 @@ module AISupportAgent
   end
 
   class SmtpReportEmailSender < ReportEmailSender
-    def initialize(@settings : SmtpSettings)
+    def initialize(@settings : SmtpSettings, @timeout : Time::Span = REPORT_DELIVERY_TIMEOUT_SECONDS.seconds)
     end
 
     def send(email : ReportEmail) : Nil
@@ -284,7 +296,7 @@ module AISupportAgent
       message.subject email.subject
       message.message email.body
 
-      EMail::Client.new(@settings.client_config).start do
+      EMail::Client.new(@settings.client_config(@timeout)).start do
         send(message)
       end
     end
@@ -347,8 +359,19 @@ module AISupportAgent
     end
   end
 
+  struct ReportDeliveryChannel
+    getter destination : String
+    getter url : URI?
+    getter recipients : Array(String)
+
+    def initialize(@destination : String, @url : URI? = nil, @recipients : Array(String) = [] of String)
+    end
+  end
+
   class ReportDelivery
     @email_sender : ReportEmailSender?
+    @retrying = Set({String, String}).new
+    @retry_lock = Mutex.new
 
     def initialize(
       @store : ReportDeliveryStore,
@@ -356,15 +379,17 @@ module AISupportAgent
       @templates : ReportTemplateCatalog = ReportTemplateCatalog.from_environment,
       email_sender : ReportEmailSender? = nil,
     )
-      @email_sender = email_sender || @config.smtp.try { |smtp| SmtpReportEmailSender.new(smtp) }
+      @email_sender = email_sender || @config.smtp.try { |smtp| SmtpReportEmailSender.new(smtp, @config.timeout) }
     end
 
     def configure(@config : ReportDeliveryConfig, email_sender : ReportEmailSender? = nil) : Nil
-      @email_sender = email_sender || @config.smtp.try { |smtp| SmtpReportEmailSender.new(smtp) }
+      @email_sender = email_sender || @config.smtp.try { |smtp| SmtpReportEmailSender.new(smtp, @config.timeout) }
     end
 
     def deliver(report : IncidentReport) : Array(ReportDeliveryRecord)
-      unless @config.configured?
+      config = @config
+      sender = @email_sender
+      unless config.configured?
         return [@store.save(ReportDeliveryRecord.new(
           incident_id: report.incident_id,
           status: ReportDeliveryStatus::Skipped,
@@ -374,83 +399,122 @@ module AISupportAgent
         ))]
       end
 
-      rendered = @templates.render(@config.template_id, report)
-      records = [] of ReportDeliveryRecord
-      if url = @config.generic_webhook_url
-        records << deliver_generic_webhook(report, rendered, url)
+      rendered, payload = begin
+        rendered = @templates.render(config.template_id, report)
+        {rendered, ReportDeliveryPayload.new(report, rendered).to_json}
+      rescue error
+        AISupportAgent::Log.warn(exception: error) { "report rendering failed" }
+        return channels(config).map do |channel|
+          failure(report.incident_id, channel, config, 1, "#{error.class}: #{error.message}", false)
+        end
       end
-      unless @config.email_recipients.empty?
-        records << deliver_email(report, rendered)
-      end
-      records
-    rescue error
-      AISupportAgent::Log.warn(exception: error) { "report rendering failed" }
-      configured_destinations.map do |destination|
-        @store.save(ReportDeliveryRecord.new(
-          incident_id: report.incident_id,
-          status: ReportDeliveryStatus::Failed,
-          destination: destination,
-          attempted_at: Time.utc,
-          error: "#{error.class}: #{error.message}"
-        ))
+      channels(config).map do |channel|
+        record, retryable = attempt(report.incident_id, rendered, payload, channel, config, sender, 1)
+        if record.status.failed?
+          if retryable && config.max_attempts > 1
+            schedule_retries(report.incident_id, rendered, payload, channel, config, sender)
+          else
+            give_up(report.incident_id, channel)
+          end
+        end
+        record
       end
     end
 
-    private def configured_destinations : Array(String)
-      destinations = [] of String
-      destinations << "generic_webhook" if @config.generic_webhook_url
-      destinations << "email" unless @config.email_recipients.empty?
+    private def channels(config : ReportDeliveryConfig) : Array(ReportDeliveryChannel)
+      destinations = [] of ReportDeliveryChannel
+      if url = config.generic_webhook_url
+        destinations << ReportDeliveryChannel.new("generic_webhook", url: url)
+      end
+      unless config.email_recipients.empty?
+        destinations << ReportDeliveryChannel.new("email", recipients: config.email_recipients)
+      end
       destinations
     end
 
-    private def deliver_generic_webhook(report : IncidentReport, rendered : RenderedReport, url : URI) : ReportDeliveryRecord
-      response = HTTP::Client.post(
-        url,
-        headers: HTTP::Headers{"Content-Type" => "application/json"},
-        body: ReportDeliveryPayload.new(report, rendered).to_json
-      )
-
-      if response.success?
-        status = ReportDeliveryStatus::Delivered
-        error = nil
+    private def attempt(incident_id : String, rendered : RenderedReport, payload : String, channel : ReportDeliveryChannel,
+                        config : ReportDeliveryConfig, sender : ReportEmailSender?, number : Int32) : Tuple(ReportDeliveryRecord, Bool)
+      response_status = nil
+      if url = channel.url
+        unless url.scheme.in?("http", "https") && url.host.presence
+          return {failure(incident_id, channel, config, number, "invalid webhook URL", false), false}
+        end
+        client = HTTP::Client.new(url)
+        client.connect_timeout = config.timeout
+        client.read_timeout = config.timeout
+        begin
+          response = client.post(url.request_target, headers: HTTP::Headers{"Content-Type" => "application/json"}, body: payload)
+        ensure
+          client.close
+        end
+        response_status = response.status_code
+        unless response.success?
+          retryable = response_status.in?(408, 425, 429) || (500..599).includes?(response_status)
+          return {failure(incident_id, channel, config, number, "HTTP #{response_status}: #{response.body}", retryable, response_status), retryable}
+        end
       else
-        status = ReportDeliveryStatus::Failed
-        error = "HTTP #{response.status_code}: #{response.body}"
+        unless sender
+          return {failure(incident_id, channel, config, number, "SMTP is not configured", false), false}
+        end
+        sender.send(ReportEmail.new(channel.recipients, rendered.subject, rendered.body))
       end
-
-      @store.save(ReportDeliveryRecord.new(
-        incident_id: report.incident_id,
-        status: status,
-        destination: "generic_webhook",
-        attempted_at: Time.utc,
-        response_status: response.status_code,
-        error: error
-      ))
-    rescue error
-      save_failure(report.incident_id, "generic_webhook", error)
-    end
-
-    private def deliver_email(report : IncidentReport, rendered : RenderedReport) : ReportDeliveryRecord
-      sender = @email_sender || raise "SMTP is not configured"
-      sender.send(ReportEmail.new(@config.email_recipients, rendered.subject, rendered.body))
-      @store.save(ReportDeliveryRecord.new(
-        incident_id: report.incident_id,
+      {@store.save(ReportDeliveryRecord.new(
+        incident_id: incident_id,
         status: ReportDeliveryStatus::Delivered,
-        destination: "email",
-        attempted_at: Time.utc
-      ))
+        destination: channel.destination,
+        attempted_at: Time.utc,
+        response_status: response_status
+      )), false}
+    rescue error : EMail::Error::ClientConfigError
+      {failure(incident_id, channel, config, number, "#{error.class}: #{error.message}", false), false}
     rescue error
-      save_failure(report.incident_id, "email", error)
+      {failure(incident_id, channel, config, number, "#{error.class}: #{error.message}", true), true}
     end
 
-    private def save_failure(incident_id : String, destination : String, error : Exception) : ReportDeliveryRecord
-      AISupportAgent::Log.warn(exception: error) { "#{destination} report delivery failed" }
+    private def schedule_retries(incident_id : String, rendered : RenderedReport, payload : String, channel : ReportDeliveryChannel,
+                                 config : ReportDeliveryConfig, sender : ReportEmailSender?) : Nil
+      key = {incident_id, channel.destination}
+      return unless @retry_lock.synchronize { @retrying.add?(key) }
+      spawn do
+        begin
+          (2..config.max_attempts).each do |number|
+            sleep config.retry_base * (2 ** (number - 2))
+            record, retryable = attempt(incident_id, rendered, payload, channel, config, sender, number)
+            break if record.status.delivered?
+            unless retryable && number < config.max_attempts
+              give_up(incident_id, channel)
+              break
+            end
+          end
+        rescue error
+          AISupportAgent::Log.error(exception: error) { "#{channel.destination} report retries stopped for #{incident_id}" }
+        ensure
+          @retry_lock.synchronize { @retrying.delete(key) }
+        end
+      end
+    end
+
+    private def give_up(incident_id : String, channel : ReportDeliveryChannel) : Nil
+      AISupportAgent::Log.error { "#{channel.destination} report delivery giving up for #{incident_id}" }
+    end
+
+    private def failure(incident_id : String, channel : ReportDeliveryChannel, config : ReportDeliveryConfig, number : Int32,
+                        message : String, retryable : Bool, response_status : Int32? = nil) : ReportDeliveryRecord
+      prefix = if !retryable
+                 "attempt #{number} of #{config.max_attempts}, not retryable: "
+               elsif number == config.max_attempts
+                 "attempt #{number} of #{config.max_attempts}, giving up: "
+               else
+                 "attempt #{number} of #{config.max_attempts}: "
+               end
+      AISupportAgent::Log.warn { "#{channel.destination} report delivery failed: #{prefix}#{message}" }
       @store.save(ReportDeliveryRecord.new(
         incident_id: incident_id,
         status: ReportDeliveryStatus::Failed,
-        destination: destination,
+        destination: channel.destination,
         attempted_at: Time.utc,
-        error: "#{error.class}: #{error.message}"
+        response_status: response_status,
+        error: prefix + message
       ))
     end
   end
