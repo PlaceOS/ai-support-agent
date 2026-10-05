@@ -13,7 +13,57 @@ module AISupportAgent
     DiagnosticEngine.new.report_for(Incident.new("aisup-spec", event, Time.utc))
   end
 
+  class MissingModuleContext < PlaceOSContext
+    getter tools = [] of String
+
+    def execute(target : String, event : IncidentEvent, io_timeout_seconds : Int32 = 10) : DiagnosticToolResult
+      @tools << target
+      if target == "module_details"
+        DiagnosticToolResult.new(target,
+          [Evidence.new("diagnostic_target_missing", "module #{event.module_id} was not found in PlaceOS")],
+          "Module missing", InvestigationStepStatus::Failed)
+      else
+        DiagnosticToolResult.new(target, [Evidence.new("placeos_rest_api", "System exists")], "System found")
+      end
+    end
+  end
+
   describe DiagnosticEngine do
+    {false, true}.each do |with_ai|
+      it "stops confidence recovery for a missing target with AI=#{with_ai}" do
+        context = MissingModuleContext.new
+        reporter = with_ai ? AIReporter.fake(AgentAnalysis.new("Confident diagnosis", confidence: 0.9)) : AIReporter.disabled
+        event = IncidentEvent.new(source: IncidentSource::Webhook, severity: IncidentSeverity::Error,
+          correlation_key: "target-missing", payload: JSON.parse({message: "runtime error"}.to_json),
+          module_id: "mod-missing", system_id: "sys-existing")
+        report = DiagnosticEngine.new(context, reporter).report_for(Incident.new("aisup-missing", event, Time.utc))
+        report.confidence.should eq 0.0
+        context.tools.should eq ["module_details"]
+        report.investigation.map(&.name).should_not contain "iterate_for_confidence"
+        step = report.investigation.find!(&.name.==("target_not_found"))
+        step.status.failed?.should be_true
+        step.summary.should eq "Module mod-missing was not found in PlaceOS; no further evidence can be collected"
+        report.decision.not_nil!.escalation_required?.should be_true
+        report.decision.not_nil!.observed_facts.should contain "module mod-missing was not found in PlaceOS"
+      end
+    end
+
+    it "keeps the existing score when an existing module's state times out" do
+      WebMock.stub(:get, "http://place.test/api/engine/v2/modules/mod-existing").to_return(body: "{}")
+      WebMock.stub(:get, "http://place.test/api/engine/v2/modules/mod-existing/state").to_return do |_request|
+        raise IO::TimeoutError.new("state timed out")
+      end
+      WebMock.stub(:get, "http://place.test/api/engine/v2/modules/mod-existing/error").to_return(body: "[]")
+      WebMock.stub(:get, "http://place.test/api/engine/v2/cluster/").to_return(body: "[]")
+      context = PlaceOSContext.new(::PlaceOS::Client.new("http://place.test", x_api_key: "test-key"))
+      event = IncidentEvent.new(source: IncidentSource::Webhook, severity: IncidentSeverity::Error,
+        correlation_key: "state-timeout", payload: JSON.parse({message: "runtime error"}.to_json), module_id: "mod-existing")
+      report = DiagnosticEngine.new(context, AIReporter.disabled).report_for(Incident.new("aisup-timeout", event, Time.utc))
+      report.confidence.should be_close(0.8, 0.0001)
+      report.evidence.map(&.source).should_not contain "diagnostic_target_missing"
+      report.investigation.map(&.name).should_not contain "target_not_found"
+    end
+
     it "classifies auth failures" do
       report = AISupportAgent.diagnostic_report_for({error: "HTTP 401 Unauthorized from upstream"}.to_json)
 

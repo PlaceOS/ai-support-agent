@@ -8,6 +8,19 @@ module AISupportAgent
 
   class PlaceOSContext
     class ToolError < Exception
+      getter status_code : Int32?
+
+      def initialize(message : String, @status_code : Int32? = nil)
+        super(message)
+      end
+    end
+
+    class TargetNotFound < ToolError
+      getter module_id : String
+
+      def initialize(@module_id : String)
+        super("module #{module_id} was not found in PlaceOS", 404)
+      end
     end
 
     def self.static(evidence : Array(Evidence), maintenance_targets = [] of MaintenanceTarget) : PlaceOSContext
@@ -114,7 +127,11 @@ module AISupportAgent
       summary = evidence.empty? ? "No evidence collected for #{target}" : "Collected #{evidence.size} evidence item(s) for #{target}"
       DiagnosticToolResult.new(target, evidence, summary)
     rescue error
-      evidence = [Evidence.new(source: "diagnostic_tool_error", message: "#{target} failed: #{error.class}: #{error.message}")]
+      evidence = if error.is_a?(TargetNotFound)
+                   [Evidence.new(source: "diagnostic_target_missing", message: error.message.not_nil!)]
+                 else
+                   [Evidence.new(source: "diagnostic_tool_error", message: "#{target} failed: #{error.class}: #{error.message}")]
+                 end
       DiagnosticToolResult.new(
         target,
         evidence,
@@ -135,6 +152,9 @@ module AISupportAgent
           data: Redactor.redact(details)
         ),
       ]
+    rescue error : ToolError
+      raise TargetNotFound.new(event.module_id.not_nil!) if error.status_code == 404
+      raise error
     end
 
     private def module_state(event : IncidentEvent, io_timeout_seconds : Int32) : Array(Evidence)
@@ -149,6 +169,9 @@ module AISupportAgent
           data: Redactor.redact(state)
         ),
       ]
+    rescue error : ToolError
+      raise TargetNotFound.new(event.module_id.not_nil!) if error.status_code == 404
+      raise error
     end
 
     private def module_error_evidence(event : IncidentEvent, io_timeout_seconds : Int32) : Array(Evidence)
@@ -277,7 +300,7 @@ module AISupportAgent
 
         response = http.get(path)
         unless response.success?
-          raise ToolError.new("PlaceOS REST API returned HTTP #{response.status_code} for #{path}")
+          raise ToolError.new("PlaceOS REST API returned HTTP #{response.status_code} for #{path}", response.status_code)
         end
         JSON.parse(response.body)
       end
