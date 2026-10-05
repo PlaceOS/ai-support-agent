@@ -392,6 +392,54 @@ module AISupportAgent
       failed.error.try(&.should contain "SMTP offline")
     end
     describe "retry policy" do
+      {"greeting", "recipient"}.each do |failure_stage|
+        it "retries an SMTP #{failure_stage} rejection instead of recording delivery" do
+          server = TCPServer.new("127.0.0.1", 0)
+          connections = 0
+          spawn do
+            2.times do
+              socket = server.accept
+              connections += 1
+              rejecting = connections == 1
+              socket.print(rejecting && failure_stage == "greeting" ? "421 unavailable\r\n" : "220 localhost ready\r\n")
+              while line = socket.gets
+                command = line.strip
+                case command
+                when .starts_with?("EHLO"), .starts_with?("HELO"), "RSET", .starts_with?("MAIL FROM")
+                  socket.print "250 OK\r\n"
+                when .starts_with?("RCPT TO")
+                  socket.print(rejecting && failure_stage == "recipient" ? "450 try later\r\n" : "250 OK\r\n")
+                when "DATA"
+                  socket.print "354 send message\r\n"
+                  while data = socket.gets
+                    break if data.strip == "."
+                  end
+                  socket.print "250 queued\r\n"
+                when "QUIT"
+                  socket.print "221 bye\r\n"
+                  break
+                end
+              end
+              socket.close
+            end
+          rescue error : Socket::Error
+            raise error unless server.closed?
+          end
+          store = ReportDeliveryStore.new
+          smtp = SmtpSettings.new("127.0.0.1", server.local_address.port, "example.test", "support@example.test")
+          delivery = ReportDelivery.new(store, ReportDeliveryConfig.new(
+            email_recipients: ["operator@example.test"], smtp: smtp, max_attempts: 2, retry_base: 1.millisecond
+          ))
+          first = delivery.deliver(delivery_report).first
+          first.status.failed?.should be_true
+          records = await_delivery_count(store, 2)
+          records.last.status.delivered?.should be_true
+          connections.should eq 2
+        ensure
+          server.try(&.close)
+        end
+      end
+
       it "retries a 503 and returns only first-attempt records before the retry" do
         calls = 0
         WebMock.stub(:post, "https://hooks.example.test/reports").to_return do |_request|

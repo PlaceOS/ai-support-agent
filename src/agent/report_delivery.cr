@@ -302,9 +302,11 @@ module AISupportAgent
       message.subject email.subject
       message.message email.body
 
+      accepted = false
       EMail::Client.new(@settings.client_config(@timeout)).start do
-        send(message)
+        accepted = send(message)
       end
+      raise "SMTP server did not accept the report email" unless accepted
     end
   end
 
