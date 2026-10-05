@@ -498,6 +498,7 @@ module AISupportAgent
 
       sources = evidence.map(&.source).uniq!
       facts << "Evidence sources: #{sources.join(", ")}" unless sources.empty?
+      evidence.select(&.source.==("diagnostic_target_missing")).each { |item| facts << item.message }
       facts
     end
   end

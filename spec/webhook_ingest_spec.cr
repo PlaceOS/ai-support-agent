@@ -2,6 +2,25 @@ require "./helper"
 
 module AISupportAgent
   describe WebhookIngest do
+    it "escalates a webhook for an unknown module even when its system exists" do
+      base = ENV["PLACE_URI"].rstrip('/')
+      WebMock.stub(:get, "#{base}/api/engine/v2/modules/mod-missing").to_return(status: 404)
+      system = WebMock.stub(:get, "#{base}/api/engine/v2/systems/sys-existing").to_return(body: "{}")
+      response = client.post("/api/ai-support/v1/webhooks/generic",
+        body: {source: "webhook", severity: "error", correlation_key: "webhook-missing-module",
+               module_id: "mod-missing", system_id: "sys-existing", payload: {message: "runtime error"}}.to_json,
+        headers: HTTP::Headers{"Content-Type" => "application/json"})
+      response.status_code.should eq 202
+      report = IncidentReport.from_json(response.body)
+      report.confidence.should eq 0.0
+      report.remediation_proposal.should be_nil
+      report.status.escalated?.should be_true
+      report.decision.not_nil!.escalation_required?.should be_true
+      AISupportAgent.escalations.for_incident(report.incident_id).size.should eq 1
+      AISupportAgent.incidents.find(report.incident_id).not_nil!.remediation_proposal.should be_nil
+      system.calls.should eq 0
+    end
+
     it "normalizes Grafana payloads" do
       event = WebhookIngest.grafana({
         status:       "firing",

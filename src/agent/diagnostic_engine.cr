@@ -43,9 +43,19 @@ module AISupportAgent
       evidence.concat(tool_evidence)
       current_confidence = confidence(playbook, evidence, completed_tools, failed_tools)
 
+      target_missing = evidence.any?(&.source.==("diagnostic_target_missing"))
+      if target_missing
+        investigation << InvestigationStep.new(
+          name: "target_not_found",
+          status: InvestigationStepStatus::Failed,
+          summary: "Module #{event.module_id} was not found in PlaceOS; no further evidence can be collected",
+          evidence_count: evidence.size
+        )
+      end
+
       fallback_steps = playbook.fallback_steps(completed_tools)
       iteration = 0
-      while current_confidence < plan.confidence_threshold && iteration < plan.max_iterations
+      while !target_missing && current_confidence < plan.confidence_threshold && iteration < plan.max_iterations
         fallback_step = fallback_steps.shift?
         break unless fallback_step
 
@@ -149,6 +159,7 @@ module AISupportAgent
       completed_tools : Array(String),
       failed_tools : Array(String),
     ) : Float64
+      return 0.0 if evidence.any?(&.source.==("diagnostic_target_missing"))
       base = playbook.analysis.initial_confidence
       sources = evidence.map(&.source)
       score = base
@@ -176,7 +187,7 @@ module AISupportAgent
     ) : AgentAnalysis
       confidence = analysis.confidence
       return analysis unless confidence && confidence > ceiling
-      return analysis if failed_tools.empty? && evidence.none?(&.source.==("diagnostic_context_missing"))
+      return analysis if failed_tools.empty? && evidence.none? { |item| item.source.in?("diagnostic_context_missing", "diagnostic_target_missing") }
 
       AISupportAgent::Log.warn { "AI confidence exceeded failure-penalized diagnostic confidence; applying diagnostic ceiling" }
       AgentAnalysis.new(analysis.summary, analysis.next_steps, ceiling)

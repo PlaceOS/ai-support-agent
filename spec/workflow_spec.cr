@@ -128,6 +128,25 @@ module AISupportAgent
   end
 
   describe WorkflowRunner do
+    it "escalates a missing target without a remediation proposal" do
+      WebMock.stub(:get, "http://place.test/api/engine/v2/modules/mod-missing").to_return(status: 404)
+      system = WebMock.stub(:get, "http://place.test/api/engine/v2/systems/sys-existing").to_return(body: "{}")
+      context = PlaceOSContext.new(::PlaceOS::Client.new("http://place.test", x_api_key: "test-key"))
+      runner = WorkflowRunner.new(WorkflowCatalog.load("playbooks"), DiagnosticEngine.new(context, AIReporter.disabled))
+      event = IncidentEvent.new(source: IncidentSource::Webhook, severity: IncidentSeverity::Error,
+        correlation_key: "missing-target-workflow", payload: JSON.parse({message: "runtime error"}.to_json),
+        module_id: "mod-missing", system_id: "sys-existing")
+      report = runner.report_for(Incident.new("aisup-missing-workflow", event, Time.utc))
+      report.remediation_proposal.should be_nil
+      report.status.escalated?.should be_true
+      report.confidence.should eq 0.0
+      delivery = ReportDeliveryRecord.new(report.incident_id, ReportDeliveryStatus::Skipped, "disabled", Time.utc)
+      escalation = EscalationRecord.from(report, delivery)
+      escalation.should_not be_nil
+      escalation.not_nil!.incident_id.should eq report.incident_id
+      system.calls.should eq 0
+    end
+
     it "routes sufficient diagnostics to the declared report terminal" do
       catalog = WorkflowCatalog.load("playbooks")
       context = PlaceOSContext.static([Evidence.new(source: "fixture", message: "context available")])

@@ -24,7 +24,50 @@ module AISupportAgent
     }
   end
 
+  class ModuleLookupContext < PlaceOSContext
+    def lookup_details(event : IncidentEvent) : Array(Evidence)
+      module_details(event, 1)
+    end
+  end
+
   describe PlaceOSContext do
+    it "raises a target-not-found error for a missing module" do
+      WebMock.stub(:get, "http://place.test/api/engine/v2/modules/mod-missing").to_return(status: 404)
+      context = ModuleLookupContext.new(::PlaceOS::Client.new("http://place.test", x_api_key: "test-key"))
+      event = IncidentEvent.new(source: IncidentSource::Webhook, severity: IncidentSeverity::Error,
+        correlation_key: "missing-module-error", payload: JSON.parse("{}"), module_id: "mod-missing")
+      error = expect_raises(PlaceOSContext::TargetNotFound) { context.lookup_details(event) }
+      error.module_id.should eq "mod-missing"
+      error.message.should eq "module mod-missing was not found in PlaceOS"
+    end
+
+    {"module_details" => "", "module_state" => "/state"}.each do |tool, suffix|
+      it "marks a 404 from #{tool} as a missing target" do
+        WebMock.stub(:get, "http://place.test/api/engine/v2/modules/mod-missing#{suffix}").to_return(status: 404)
+        context = PlaceOSContext.new(::PlaceOS::Client.new("http://place.test", x_api_key: "test-key"))
+        event = IncidentEvent.new(source: IncidentSource::Webhook, severity: IncidentSeverity::Error,
+          correlation_key: "missing-#{tool}", payload: JSON.parse("{}"), module_id: "mod-missing")
+        result = context.execute(tool, event)
+        result.status.failed?.should be_true
+        result.evidence.map(&.source).should eq ["diagnostic_target_missing"]
+        result.evidence.first.message.should eq "module mod-missing was not found in PlaceOS"
+      end
+    end
+
+    it "keeps a module 500 and other tools' 404s as tool errors" do
+      WebMock.stub(:get, "http://place.test/api/engine/v2/modules/mod-missing").to_return(status: 500)
+      WebMock.stub(:get, "http://place.test/api/engine/v2/modules/mod-missing/error").to_return(status: 404)
+      WebMock.stub(:get, "http://place.test/api/engine/v2/systems/sys-missing").to_return(status: 404)
+      context = PlaceOSContext.new(::PlaceOS::Client.new("http://place.test", x_api_key: "test-key"))
+      event = IncidentEvent.new(source: IncidentSource::Webhook, severity: IncidentSeverity::Error,
+        correlation_key: "ordinary-tool-errors", payload: JSON.parse("{}"), module_id: "mod-missing", system_id: "sys-missing")
+      %w(module_details module_error_logs system_details).each do |tool|
+        result = context.execute(tool, event)
+        result.status.failed?.should be_true
+        result.evidence.map(&.source).should eq ["diagnostic_tool_error"]
+      end
+    end
+
     it "adds PlaceOS context evidence to diagnostic reports" do
       event = IncidentEvent.new(
         source: IncidentSource::ModuleState,
