@@ -1023,6 +1023,17 @@ module AISupportAgent
       end || persist(&.find_by_correlation_key(correlation_key))
     end
 
+    # Unresolved incidents whose correlation key starts with `prefix`
+    def open_by_correlation_prefix(prefix : String) : Array(IncidentReport)
+      persisted = persist(&.open_reports_by_correlation_prefix(prefix))
+      return persisted if persisted
+      @lock.synchronize do
+        @correlation_index.compact_map do |key, incident_id|
+          @reports[incident_id]? if key.starts_with?(prefix)
+        end.sort_by!(&.created_at)
+      end
+    end
+
     def all : Array(IncidentReport)
       persist(&.all_reports) || @lock.synchronize { @reports.values.sort_by!(&.created_at) }
     end
@@ -1237,6 +1248,15 @@ module AISupportAgent
     def find_by_correlation_key(correlation_key : String) : IncidentReport?
       incident = ::PlaceOS::Model::AiIncident.where(correlation_key: correlation_key, resolved_at: nil).order(created_at: :desc).limit(1).to_a.first?
       incident.try { |model| latest_report(model.id.as(String)) }
+    end
+
+    def open_reports_by_correlation_prefix(prefix : String) : Array(IncidentReport)
+      pattern = prefix.gsub(/[\\%_]/) { |char| "\\#{char}" } + "%"
+      ::PlaceOS::Model::AiIncident
+        .where("correlation_key LIKE ? AND resolved_at IS NULL", pattern)
+        .order(created_at: :asc)
+        .to_a
+        .compact_map { |incident| latest_report(incident.id.as(String)) }
     end
 
     def all_reports : Array(IncidentReport)

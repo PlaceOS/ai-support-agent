@@ -23,6 +23,12 @@ module AISupportAgent
       end
     end
 
+    enum ModuleHealth
+      Healthy
+      Failing
+      Missing
+    end
+
     def self.static(evidence : Array(Evidence), maintenance_targets = [] of MaintenanceTarget) : PlaceOSContext
       new(static_evidence: evidence, static_maintenance_targets: maintenance_targets)
     end
@@ -79,6 +85,27 @@ module AISupportAgent
       evidence.concat(execute("system_details", event).evidence)
       evidence.concat(execute("core_loaded_processes", event).evidence)
       ContextEvidence.new(evidence)
+    end
+
+    # Current health of one module, read from `GET /modules/:id`. A static context answers from its
+    # maintenance targets: listed with a runtime error is Failing, listed without one is Healthy, unlisted is Missing.
+    def module_health(module_id : String, io_timeout_seconds : Int32 = 10) : ModuleHealth
+      if targets = @static_maintenance_targets
+        target = targets.find(&.module_id.==(module_id))
+        return ModuleHealth::Missing unless target
+        return target.has_runtime_error? ? ModuleHealth::Failing : ModuleHealth::Healthy
+      end
+      if configuration_error = @configuration_error
+        raise ToolError.new(configuration_error)
+      end
+      client = @client || raise ToolError.new("PlaceOS client is not configured")
+
+      details = rest_json(client, "/api/engine/v2/modules/#{URI.encode_path_segment(module_id)}", io_timeout_seconds)
+      failing = details.as_h["has_runtime_error"]?.try(&.as_bool?) || false
+      failing ? ModuleHealth::Failing : ModuleHealth::Healthy
+    rescue error : ToolError
+      raise error unless error.status_code == 404
+      ModuleHealth::Missing
     end
 
     def maintenance_targets(scope : MaintenanceScope, io_timeout_seconds : Int32 = 10) : Array(MaintenanceTarget)

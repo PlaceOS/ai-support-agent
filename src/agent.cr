@@ -27,7 +27,8 @@ module AISupportAgent
       maintenance_runs,
       ->(event : IncidentEvent, diagnostic : ProcedureReference, deliver_report : Bool) {
         ingest(event, diagnostic_reference: diagnostic, deliver_report: deliver_report)
-      }
+      },
+      incidents
     )
   end
   class_getter maintenance_scheduler : MaintenanceScheduler { MaintenanceScheduler.new(workflow_catalog, maintenance_runner) }
