@@ -69,6 +69,51 @@ module AISupportAgent
     )
   end
 
+  def self.store_backed_ingest(incidents : IncidentStore, events : Array(IncidentEvent)) : Proc(IncidentEvent, ProcedureReference, Bool, IncidentReport)
+    ->(event : IncidentEvent, _diagnostic : ProcedureReference, _deliver_report : Bool) do
+      events << event
+      if existing = incidents.find_by_correlation_key(event.correlation_key)
+        updated = event.resolution? ? existing.with_resolution_seen(Time.utc) : existing.with_duplicate_seen(Time.utc)
+        incidents.save(updated, event)
+      else
+        incidents.save(maintenance_report(event), event)
+      end
+    end
+  end
+
+  def self.scheduled_event(correlation_key : String, module_id : String) : IncidentEvent
+    IncidentEvent.new(
+      source: IncidentSource::Scheduled,
+      severity: IncidentSeverity::Warning,
+      correlation_key: correlation_key,
+      payload: JSON.parse({maintenance_procedure: "sweep"}.to_json),
+      system_id: "sys-1",
+      module_id: module_id
+    )
+  end
+
+  describe "IncidentStore#open_by_correlation_prefix" do
+    {"in memory", "in Postgres"}.each do |backing|
+      it "returns only unresolved incidents under the prefix #{backing}" do
+        incidents = backing == "in memory" ? IncidentStore.new : AISupportAgent.incidents
+        incidents.persistence_enabled?.should eq(backing == "in Postgres")
+        open_event = AISupportAgent.scheduled_event("maintenance:sweep_a:mod-open:module-runtime-error", "mod-open")
+        resolved_event = AISupportAgent.scheduled_event("maintenance:sweep_a:mod-resolved:module-runtime-error", "mod-resolved")
+        decoy_event = AISupportAgent.scheduled_event("maintenance:sweepXa:mod-decoy:module-runtime-error", "mod-decoy")
+        other_event = AISupportAgent.scheduled_event("webhook:mod-other", "mod-other")
+        incidents.save(AISupportAgent.maintenance_report(open_event), open_event)
+        incidents.save(AISupportAgent.maintenance_report(resolved_event).with_resolution_seen(Time.utc), resolved_event)
+        incidents.save(AISupportAgent.maintenance_report(decoy_event), decoy_event)
+        incidents.save(AISupportAgent.maintenance_report(other_event), other_event)
+
+        matches = incidents.open_by_correlation_prefix("maintenance:sweep_a:")
+
+        matches.map(&.correlation_key).should eq ["maintenance:sweep_a:mod-open:module-runtime-error"]
+        incidents.open_by_correlation_prefix("maintenance:none:").should be_empty
+      end
+    end
+  end
+
   describe MaintenanceProcedureRegistry do
     it "loads repository procedures and validates their diagnostic references" do
       diagnostics = DiagnosticProcedureRegistry.load("playbooks/diagnostics", live_reload: false)
@@ -167,6 +212,132 @@ module AISupportAgent
       plan.procedures.map(&.id).should contain "module-runtime-error"
       delivery_policies.should eq [true]
       reports.first.actions_taken.should eq ["report_only_no_remediation"]
+    end
+
+    it "keeps one open incident per module across sweep windows" do
+      failing = MaintenanceTarget.new("mod-runtime", "sys-1", "Display", 1, has_runtime_error: true)
+      other = MaintenanceTarget.new("mod-other", "sys-1", "Other", 2, has_runtime_error: true)
+      context = PlaceOSContext.static([Evidence.new("placeos_rest_api", "runtime exception evidence")], [failing, other])
+      procedure = WorkflowCatalog.load("playbooks").maintenance("runtime-error-sweep") || raise "maintenance procedure not loaded"
+      incidents = IncidentStore.new
+      events = [] of IncidentEvent
+      runner = MaintenanceRunner.new(context, MaintenanceRunStore.new, AISupportAgent.store_backed_ingest(incidents, events), incidents)
+
+      first = runner.run(procedure, Time.utc(2026, 7, 21, 8, 30, 0))
+      second = runner.run(procedure, Time.utc(2026, 7, 21, 8, 45, 0))
+
+      first.incident_ids.size.should eq 2
+      second.id.should_not eq first.id
+      second.incident_ids.sort.should eq first.incident_ids.sort
+      events.map(&.correlation_key).uniq.sort.should eq [
+        "maintenance:runtime-error-sweep:mod-other:module-runtime-error",
+        "maintenance:runtime-error-sweep:mod-runtime:module-runtime-error",
+      ]
+      events.none?(&.resolution?).should be_true
+      reports = incidents.all
+      reports.size.should eq 2
+      reports.all?(&.status.open?).should be_true
+      reports.map(&.duplicate_count).should eq [1, 1]
+    end
+
+    it "resolves an incident once its module is no longer failing or no longer exists, and keeps a still-failing one open" do
+      runtime = MaintenanceTarget.new("mod-runtime", "sys-1", "Display", 1, has_runtime_error: true)
+      recovered = MaintenanceTarget.new("mod-recovered", "sys-1", "Recovered", 2, has_runtime_error: true)
+      deleted = MaintenanceTarget.new("mod-deleted", "sys-1", "Deleted", 3, has_runtime_error: true)
+      outside = MaintenanceTarget.new("mod-outside", "sys-1", "Outside", 4, has_runtime_error: true)
+      evidence = [Evidence.new("placeos_rest_api", "runtime exception evidence")]
+      procedure = MaintenanceProcedure.from_yaml(<<-YAML)
+        schema_version: maintenance-procedure.v1
+        id: runtime-error-sweep
+        version: 1
+        name: Scheduled module runtime-error sweep
+        mode: maintenance
+        schedule:
+          cron: "0 */15 * * * *"
+        scope:
+          kind: modules
+          filter: runtime_errors
+          limit: 3
+        diagnostics:
+          - diagnostic:module-runtime-error@1
+        deduplication_window_seconds: 900
+        reporting:
+          deliver_reports: true
+        YAML
+      incidents = IncidentStore.new
+      events = [] of IncidentEvent
+      runs = MaintenanceRunStore.new
+      ingest = AISupportAgent.store_backed_ingest(incidents, events)
+
+      first = MaintenanceRunner.new(PlaceOSContext.static(evidence, [runtime, recovered, deleted]), runs, ingest, incidents)
+        .run(procedure, Time.utc(2026, 7, 21, 8, 30, 0))
+      first.incident_ids.size.should eq 3
+
+      later_targets = [
+        runtime,
+        MaintenanceTarget.new("mod-recovered", "sys-1", "Recovered", 2, has_runtime_error: false),
+        MaintenanceTarget.new("mod-extra-1", "sys-1", "Extra 1", 5, has_runtime_error: true),
+        MaintenanceTarget.new("mod-extra-2", "sys-1", "Extra 2", 6, has_runtime_error: true),
+        outside,
+      ]
+      second = MaintenanceRunner.new(PlaceOSContext.static(evidence, later_targets), runs, ingest, incidents)
+        .run(procedure, Time.utc(2026, 7, 21, 8, 45, 0))
+
+      second.target_count.should eq 3
+      by_key = incidents.all.to_h { |report| {report.correlation_key, report} }
+      by_key["maintenance:runtime-error-sweep:mod-runtime:module-runtime-error"].status.open?.should be_true
+      by_key["maintenance:runtime-error-sweep:mod-recovered:module-runtime-error"].status.resolved?.should be_true
+      by_key["maintenance:runtime-error-sweep:mod-deleted:module-runtime-error"].status.resolved?.should be_true
+      resolutions = events.select(&.resolution?)
+      resolutions.map(&.module_id).compact.sort.should eq ["mod-deleted", "mod-recovered"]
+      resolutions.map { |event| event.payload["module_health"].as_s }.sort.should eq ["healthy", "missing"]
+      resolutions.all? { |event| event.payload["diagnostic"].as_s == "diagnostic:module-runtime-error@1" }.should be_true
+      second.incident_ids.should contain by_key["maintenance:runtime-error-sweep:mod-recovered:module-runtime-error"].incident_id
+      incidents.all.map(&.correlation_key).should_not contain "maintenance:runtime-error-sweep:mod-outside:module-runtime-error"
+    end
+
+    it "keeps an incident open when the direct module check still reports a runtime error" do
+      first_targets = [
+        MaintenanceTarget.new("mod-a", "sys-1", "A", 1, has_runtime_error: true),
+        MaintenanceTarget.new("mod-b", "sys-1", "B", 2, has_runtime_error: true),
+      ]
+      evidence = [Evidence.new("placeos_rest_api", "runtime exception evidence")]
+      procedure = MaintenanceProcedure.from_yaml(<<-YAML)
+        schema_version: maintenance-procedure.v1
+        id: runtime-error-sweep
+        version: 1
+        name: Scheduled module runtime-error sweep
+        mode: maintenance
+        schedule:
+          cron: "0 */15 * * * *"
+        scope:
+          kind: modules
+          filter: runtime_errors
+          limit: 2
+        diagnostics:
+          - diagnostic:module-runtime-error@1
+        deduplication_window_seconds: 900
+        reporting:
+          deliver_reports: true
+        YAML
+      incidents = IncidentStore.new
+      events = [] of IncidentEvent
+      runs = MaintenanceRunStore.new
+      ingest = AISupportAgent.store_backed_ingest(incidents, events)
+
+      MaintenanceRunner.new(PlaceOSContext.static(evidence, first_targets), runs, ingest, incidents)
+        .run(procedure, Time.utc(2026, 7, 21, 8, 30, 0))
+      crowded = [
+        MaintenanceTarget.new("mod-c", "sys-1", "C", 3, has_runtime_error: true),
+        MaintenanceTarget.new("mod-d", "sys-1", "D", 4, has_runtime_error: true),
+      ] + first_targets
+      second = MaintenanceRunner.new(PlaceOSContext.static(evidence, crowded), runs, ingest, incidents)
+        .run(procedure, Time.utc(2026, 7, 21, 8, 45, 0))
+
+      second.target_count.should eq 2
+      events.none?(&.resolution?).should be_true
+      incidents.all.size.should eq 4
+      incidents.all.all?(&.status.open?).should be_true
     end
 
     it "records scope failures without crashing the scheduler" do

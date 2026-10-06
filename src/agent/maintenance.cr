@@ -303,7 +303,12 @@ module AISupportAgent
       @context : PlaceOSContext,
       @store : MaintenanceRunStore,
       @ingest : Proc(IncidentEvent, ProcedureReference, Bool, IncidentReport),
+      @incidents : IncidentStore? = nil,
     )
+    end
+
+    def self.correlation_key(procedure_id : String, module_id : String, diagnostic_id : String) : String
+      "maintenance:#{procedure_id}:#{module_id}:#{diagnostic_id}"
     end
 
     def run(procedure : MaintenanceProcedure, scheduled_for : Time = Time.utc) : MaintenanceRun
@@ -320,7 +325,7 @@ module AISupportAgent
             IncidentEvent.new(
               source: IncidentSource::Scheduled,
               severity: IncidentSeverity::Warning,
-              correlation_key: "maintenance:#{procedure.id}:#{bucket}:#{target.module_id}:#{reference.id}",
+              correlation_key: MaintenanceRunner.correlation_key(procedure.id, target.module_id, reference.id),
               payload: JSON.parse({maintenance_procedure: procedure.id, diagnostic: reference.to_s}.to_json),
               system_id: target.system_id,
               module_id: target.module_id,
@@ -332,6 +337,7 @@ module AISupportAgent
           )
         end
       end
+      resolved = resolve_recovered(procedure, targets)
       counts = Hash(String, Int32).new(0)
       reports.each { |report| counts[report.classification.to_s] += 1 }
       @store.save(MaintenanceRun.new(
@@ -340,7 +346,7 @@ module AISupportAgent
         schedule_bucket: bucket,
         status: MaintenanceRunStatus::Completed,
         target_count: targets.size,
-        incident_ids: reports.map(&.incident_id),
+        incident_ids: reports.map(&.incident_id) + resolved.map(&.incident_id),
         classification_counts: counts,
         started_at: started_at,
         completed_at: Time.utc
@@ -358,6 +364,48 @@ module AISupportAgent
         completed_at: Time.utc,
         error: "#{error.class}: #{error.message}"
       ))
+    end
+
+    # Resolves this procedure's open incidents whose module is no longer in the target list and, on a
+    # direct check, is no longer failing or no longer exists. A module that is still failing stays open.
+    private def resolve_recovered(procedure : MaintenanceProcedure, targets : Array(MaintenanceTarget)) : Array(IncidentReport)
+      incidents = @incidents
+      return [] of IncidentReport unless incidents
+
+      target_ids = targets.map(&.module_id).to_set
+      references = procedure.diagnostic_references
+      incidents.open_by_correlation_prefix("maintenance:#{procedure.id}:").compact_map do |incident|
+        module_id = incident.module_id
+        next unless module_id
+        next if target_ids.includes?(module_id)
+        reference = references.find { |candidate| incident.correlation_key.ends_with?(":#{candidate.id}") } || references.first
+        begin
+          health = @context.module_health(module_id)
+          next if health.failing?
+          @ingest.call(
+            IncidentEvent.new(
+              source: IncidentSource::Scheduled,
+              severity: IncidentSeverity::Info,
+              correlation_key: incident.correlation_key,
+              payload: JSON.parse({
+                maintenance_procedure: procedure.id,
+                diagnostic:            reference.to_s,
+                status:                "resolved",
+                module_health:         health.to_s.downcase,
+              }.to_json),
+              system_id: incident.system_id,
+              module_id: module_id,
+              module_name: incident.module_name,
+              module_index: incident.module_index
+            ),
+            reference,
+            false
+          )
+        rescue error
+          AISupportAgent::Log.warn(exception: error) { "maintenance sweep could not resolve incident #{incident.incident_id} for #{module_id}" }
+          nil
+        end
+      end
     end
   end
 
