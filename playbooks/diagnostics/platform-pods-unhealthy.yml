@@ -1,0 +1,38 @@
+$schema: ../schemas/diagnostic.v1.json
+schema_version: diagnostic-procedure.v1
+id: platform-pods-unhealthy
+classification: platform_pods_unhealthy
+version: 1
+name: Platform Pods Unhealthy
+mode: diagnostic
+priority: 115
+matches:
+  patterns:
+    - '(?i)crashloop|oom ?killed|out of memory|memory (?:leak|usage|threshold|alarm|high)|high memory|liveness probe|readiness probe|probe failed|pods? (?:are |is |keep |keeps )?(?:restart|crash|unhealthy|pending|evicted|not ready)|cpu (?:usage|throttl|threshold|high)|disk (?:space|full|usage)|out of disk'
+steps:
+  - id: cluster-status
+    tool: cluster_status
+    io_timeout_seconds: 15
+    requires: []
+  - id: platform-version
+    tool: platform_version
+    io_timeout_seconds: 5
+    requires: []
+analysis:
+  hypotheses:
+    - A core or api pod is restarting under memory pressure.
+    - The cluster nodes were patched or restarted and the pods did not come back healthy.
+    - Resource requests and limits are below what the load needs.
+  ruled_out:
+    - A device or driver fault is not the primary symptom.
+  initial_confidence: 0.4
+  minimum_confidence: 0.65
+  escalate_below: 0.6
+  max_iterations: 1
+  fallback_tools: [system_details]
+guidance:
+  summary: Read the pod events and the memory use on each core node; an infrastructure engineer must confirm limits and restarts.
+  operator_steps:
+    - Read the pod events for OOMKilled and probe failures on each core and api pod.
+    - Compare memory requests and limits with the observed use.
+    - Restart affected pods one at a time outside business hours if they are not recovering.

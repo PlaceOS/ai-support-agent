@@ -144,6 +144,8 @@ For webhook and changefeed incidents, matching uses typed source, payload-patter
 
 Adding a YAML diagnostic file does not activate it by itself. It must also be referenced by a workflow or maintenance procedure.
 
+The diagnostics shipped in `playbooks/diagnostics` cover the device-level signatures (runtime error, HTTP 401/403, TLS, TCP timeout and refusal, device response timeout, SSH) and the shapes the service desk record shows most for modules and the platform: a driver setting missing from every level, a driver that no longer compiles, a sync module that stalled, a record present by id but absent from search, modules not loaded after a core restart, unhealthy pods, and API requests cut by an ingress timeout. The pod and ingress diagnostics are deliberately low-confidence so they escalate to a person with the cluster snapshot attached.
+
 ## 6. Investigation Planning
 
 The selected diagnostic procedure creates a bounded investigation plan containing:
@@ -168,7 +170,12 @@ The service executes only code-owned tools named by the selected procedure. Curr
 - Module state
 - Module runtime-error logs
 - System details
-- Settings metadata
+- Collated module settings keys against the keys the driver declares (`module_settings`)
+- Driver identity, commit, update state and compile result (`driver_details`)
+- Every module in a system with its running, connected and error flags (`system_modules`)
+- Whether a system found by id is also in the name search and zone listing (`search_consistency`)
+- Core node load and the drivers and modules each node has loaded (`cluster_status`)
+- REST API, core and platform versions (`platform_version`)
 - Core loaded-process context exposed by REST API
 
 PlaceOS access uses `PlaceOS/crystal-client`. REST API provides the authenticated boundary for module, system, and Core process evidence. Procedures cannot add arbitrary URLs, HTTP bodies, SQL, shell commands, or executable expressions.

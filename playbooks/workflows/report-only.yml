@@ -16,6 +16,13 @@ stages:
       - diagnostic:tcp-connection-closed@1
       - diagnostic:device-response-timeout@1
       - diagnostic:ssh-authentication-failure@1
+      - diagnostic:missing-required-setting@1
+      - diagnostic:driver-compile-failure@1
+      - diagnostic:sync-module-stalled@1
+      - diagnostic:search-index-stale@1
+      - diagnostic:modules-not-loaded@1
+      - diagnostic:platform-pods-unhealthy@1
+      - diagnostic:api-timeout@1
       - diagnostic:unknown-incident@1
     transitions:
       diagnosed: propose
@@ -26,6 +33,9 @@ stages:
       - remediation:restart-runtime-failure@1
       - remediation:update-http-credentials@1
       - remediation:renew-tls-certificate@1
+      - remediation:add-missing-setting@1
+      - remediation:reindex-search@1
+      - remediation:restart-core-service@1
     transitions:
       proposal_created: report
       no_proposal: report

@@ -114,7 +114,7 @@ module AISupportAgent
     it "loads repository verification procedures" do
       registry = VerificationProcedureRegistry.load("playbooks/verification")
 
-      registry.size.should eq 2
+      registry.size.should eq 4
       procedure = registry.find(ProcedureReference.parse("verification:module-runtime-recovery@1"))
       procedure.should_not be_nil
       procedure.try(&.content_hash.size).should eq 64
@@ -167,8 +167,8 @@ module AISupportAgent
       verification = File.join(root, "verification", "module-runtime-recovery.yml")
       File.write(verification, File.read(verification) + "\ncommand: curl example.com\n")
 
-      catalog.verification_count.should eq 2
-      catalog.remediation_count.should eq 3
+      catalog.verification_count.should eq 4
+      catalog.remediation_count.should eq 6
       catalog.workflow_count.should eq 1
       catalog.reload_error.should_not be_nil
     ensure

@@ -56,7 +56,7 @@ module AISupportAgent
       workflows.size.should eq 1
       workflow = workflows.default
       workflow.id.should eq "report-only-incident"
-      workflow.stage(workflow.entrypoint).procedure_references.size.should eq 8
+      workflow.stage(workflow.entrypoint).procedure_references.size.should eq 15
       workflow.content_hash.size.should eq 64
     end
 
@@ -229,9 +229,9 @@ module AISupportAgent
       procedure = File.join(root, "remediation", "restart-runtime-failure.yml")
       File.write(procedure, File.read(procedure) + "\ncommand: restart now\n")
 
-      catalog.remediation_count.should eq 3
-      catalog.verification_count.should eq 2
-      catalog.diagnostic_count.should eq 8
+      catalog.remediation_count.should eq 6
+      catalog.verification_count.should eq 4
+      catalog.diagnostic_count.should eq 15
       catalog.workflow_count.should eq 1
       catalog.reload_error.should_not be_nil
     ensure

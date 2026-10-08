@@ -1,0 +1,17 @@
+$schema: ../schemas/verification.v1.json
+schema_version: verification-procedure.v1
+id: system-modules-recovery
+version: 1
+name: Verify the system's modules are listed again
+mode: verification
+checks:
+  - id: system-modules
+    tool: system_modules
+    criterion: evidence_present
+    io_timeout_seconds: 10
+    requires: [system_id]
+policy:
+  retry_interval_seconds: 60
+  max_attempts: 3
+  timeout_seconds: 900
+  failure_outcome: escalate

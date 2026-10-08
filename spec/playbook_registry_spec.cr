@@ -130,7 +130,7 @@ module AISupportAgent
         module_id: "mod-playbook"
       )
 
-      registry.size.should eq 8
+      registry.size.should eq 15
       Dir.glob("playbooks/diagnostics/*.yml").size.should eq registry.size
       playbook = registry.select(event, event.payload)
       playbook.id.should eq "module-runtime-error"
@@ -370,8 +370,8 @@ module AISupportAgent
         Dir.mkdir(File.join(directory, "playbooks"))
         Dir.cd(directory) do
           registry = DiagnosticProcedureRegistry.from_environment
-          registry.size.should eq 8
-          Dir.glob(File.join(registry.path, "*.yml")).size.should eq 8
+          registry.size.should eq 15
+          Dir.glob(File.join(registry.path, "*.yml")).size.should eq 15
         end
       end
     ensure

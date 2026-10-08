@@ -73,6 +73,12 @@ module AISupportAgent
       "debug_or_error_logs"   => ["module_id"],
       "system_details"        => ["system_id"],
       "core_loaded_processes" => ["module_id"],
+      "module_settings"       => ["module_id"],
+      "driver_details"        => ["module_id"],
+      "system_modules"        => ["system_id"],
+      "search_consistency"    => ["system_id"],
+      "cluster_status"        => [] of String,
+      "platform_version"      => [] of String,
     }
 
     getter id : String

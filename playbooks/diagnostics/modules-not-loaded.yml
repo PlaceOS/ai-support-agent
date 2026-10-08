@@ -1,0 +1,42 @@
+$schema: ../schemas/diagnostic.v1.json
+schema_version: diagnostic-procedure.v1
+id: modules-not-loaded
+classification: modules_not_loaded
+version: 1
+name: Modules Not Loaded
+mode: diagnostic
+priority: 115
+matches:
+  patterns:
+    - '(?i)modules? (?:are |is |were |was )?(?:not|aren.?t|isn.?t|never|still|keeps?|kept) (?:loading|loaded|starting|started|running|spinning|coming up)|modules? (?:keep |keeps |stuck )?(?:spinning|loading)|module load (?:error|fail)|(?:all|every|some|several|multiple|many) (?:of the )?modules? (?:are|were|is|have|had|went)[^"]{0,30}(?:error|fail|stop|offline|down|not)|not loaded (?:correctly|after|since)|(?:did not|didn.?t|does not|doesn.?t) (?:load|start) after|core (?:pod )?restart'
+steps:
+  - id: system-modules
+    tool: system_modules
+    io_timeout_seconds: 10
+    requires: [system_id]
+  - id: cluster-status
+    tool: cluster_status
+    io_timeout_seconds: 15
+    requires: []
+  - id: platform-version
+    tool: platform_version
+    io_timeout_seconds: 5
+    requires: []
+analysis:
+  hypotheses:
+    - Core did not reload every module after a restart because the discovery events did not fire (fixed in 2.2405.1).
+    - A core node is missing or restarting, so its modules are not assigned.
+    - The driver binary is missing on the node that owns the module.
+  ruled_out:
+    - A single device fault would not stop several modules at once.
+  initial_confidence: 0.6
+  minimum_confidence: 0.65
+  escalate_below: 0.5
+  max_iterations: 2
+  fallback_tools: [module_details, module_state]
+guidance:
+  summary: Compare the modules the system expects with the modules each core node has loaded, and the platform version against 2.2405.1; restarting the core pods one at a time reloads the modules.
+  operator_steps:
+    - List the system's modules and compare them with the modules loaded on each core node.
+    - Check the platform version; releases before 2.2405.1 can leave modules unloaded after a core restart.
+    - Restart the core pods one at a time and confirm the modules load.
