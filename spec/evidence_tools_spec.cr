@@ -45,7 +45,8 @@ module AISupportAgent
       WebMock.stub(:get, "http://place.test/api/engine/v2/modules/mod-1").to_return(body: {id: "mod-1", driver_id: "driver-1"}.to_json)
       WebMock.stub(:get, "http://place.test/api/engine/v2/drivers/driver-1")
         .to_return(body: {id: "driver-1", name: "Azure AD Sync", module_name: "AzureAD", commit: "abc1234", update_available: true}.to_json)
-      WebMock.stub(:get, "http://place.test/api/engine/v2/drivers/driver-1/compiled").to_return(status: 404, body: {error: "Driver not compiled yet"}.to_json)
+      WebMock.stub(:get, "http://place.test/api/engine/v2/drivers/driver-1/compiled")
+        .to_return(status: 503, body: {compilation_output: "Error: undefined constant Promise"}.to_json)
 
       result = AISupportAgent.evidence_tool_context.execute("driver_details", AISupportAgent.evidence_tool_event(module_id: "mod-1"), 5)
 
@@ -54,7 +55,26 @@ module AISupportAgent
       data["name"].as_s.should eq "Azure AD Sync"
       data["commit"].as_s.should eq "abc1234"
       data["compiled"].as_bool.should be_false
-      data["compilation_output"].as_s.should contain "404"
+      data["compilation_output"].as_s.should contain "undefined constant Promise"
+    end
+
+    it "treats an empty 200 from the compiled check as compiled and a 404 as never compiled" do
+      WebMock.stub(:get, "http://place.test/api/engine/v2/modules/mod-1").to_return(body: {id: "mod-1", driver_id: "driver-1"}.to_json)
+      WebMock.stub(:get, "http://place.test/api/engine/v2/drivers/driver-1").to_return(body: {id: "driver-1", name: "Display"}.to_json)
+      WebMock.stub(:get, "http://place.test/api/engine/v2/drivers/driver-1/compiled").to_return(status: 200, body: "")
+
+      data = AISupportAgent.evidence_tool_data(AISupportAgent.evidence_tool_context.execute("driver_details", AISupportAgent.evidence_tool_event(module_id: "mod-1"), 5))
+      data["compiled"].as_bool.should be_true
+      data["compilation_output"].raw.should be_nil
+
+      WebMock.reset
+      WebMock.stub(:get, "http://place.test/api/engine/v2/modules/mod-1").to_return(body: {id: "mod-1", driver_id: "driver-1"}.to_json)
+      WebMock.stub(:get, "http://place.test/api/engine/v2/drivers/driver-1").to_return(body: {id: "driver-1", name: "Display"}.to_json)
+      WebMock.stub(:get, "http://place.test/api/engine/v2/drivers/driver-1/compiled").to_return(status: 404, body: {error: "Driver not compiled yet"}.to_json)
+
+      data = AISupportAgent.evidence_tool_data(AISupportAgent.evidence_tool_context.execute("driver_details", AISupportAgent.evidence_tool_event(module_id: "mod-1"), 5))
+      data["compiled"].as_bool.should be_false
+      data["compilation_output"].as_s.should eq "driver not compiled yet"
     end
 
     it "lists the system's modules with their running and connected state" do

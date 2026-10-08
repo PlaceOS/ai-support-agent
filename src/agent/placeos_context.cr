@@ -343,15 +343,15 @@ module AISupportAgent
       driver_id = details["driver_id"]?.try(&.as_s?) || raise ToolError.new("module #{module_id} has no driver id")
       driver = rest_json(client, "/api/engine/v2/drivers/#{URI.encode_path_segment(driver_id)}", io_timeout_seconds).as_h
 
-      compiled = true
-      compile_message = nil.as(String?)
-      begin
-        result = rest_json(client, "/api/engine/v2/drivers/#{URI.encode_path_segment(driver_id)}/compiled", io_timeout_seconds)
-        compile_message = result.as_h?.try(&.["compilation_output"]?).try(&.as_s?).try(&.[0, 2000])
-      rescue error : ToolError
-        compiled = false
-        compile_message = error.message
-      end
+      # 200 with an empty body: compiled; 404: never compiled; 503 with compilation_output: the build failed
+      status, body = rest_response(client, "/api/engine/v2/drivers/#{URI.encode_path_segment(driver_id)}/compiled", io_timeout_seconds)
+      compiled = status == 200
+      compile_message = case status
+                        when 200 then nil
+                        when 404 then "driver not compiled yet"
+                        when 503 then (JSON.parse(body).as_h?.try(&.["compilation_output"]?).try(&.as_s?) rescue nil) || body.presence || "driver failed to compile"
+                        else          raise ToolError.new("PlaceOS REST API returned HTTP #{status} for the driver compiled check")
+                        end.try(&.[0, 2000])
 
       [
         Evidence.new(
@@ -572,6 +572,19 @@ module AISupportAgent
         selected = selected.select(&.has_runtime_error?)
       end
       selected.uniq(&.module_id).first(scope.limit)
+    end
+
+    # @returns the status code and body of a GET, whatever the status
+    private def rest_response(client : ::PlaceOS::Client, path : String, io_timeout_seconds : Int32) : {Int32, String}
+      client.api_wrapper.connection do |http|
+        request_timeout = io_timeout_seconds.seconds
+        http.connect_timeout = request_timeout
+        http.read_timeout = request_timeout
+        http.write_timeout = request_timeout
+
+        response = http.get(path)
+        {response.status_code, response.body}
+      end
     end
 
     private def rest_json(client : ::PlaceOS::Client, path : String, io_timeout_seconds : Int32) : JSON::Any

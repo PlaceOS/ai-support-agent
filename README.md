@@ -114,7 +114,7 @@ A support ticket enters the same incident workflow as a webhook. `POST /api/ai-s
 }
 ```
 
-`POST /api/ai-support/v1/tickets/jira` takes a Jira Cloud webhook body (issue created, updated or commented) or a Jira issue document and normalises it. `GET /api/ai-support/v1/tickets/:reference` returns the incident for a ticket.
+Point the Jira webhook at `/tickets/jira` with a JQL filter that excludes request types the agent should not investigate (map changes, commercial requests); every ticket it receives becomes an incident. `POST /api/ai-support/v1/tickets/jira` takes a Jira Cloud webhook body (issue created, updated or commented) or a Jira issue document and normalises it. `GET /api/ai-support/v1/tickets/:reference` returns the incident for a ticket.
 
 The service reads the ticket for PlaceOS ids, hostnames, room and module names, an environment and error text, then looks the names up through the PlaceOS REST API (`domains`, `systems`, `zones`, `modules` searches). One clear match sets the incident's module or system; several equally good matches are recorded as candidates and the incident escalates for a person to choose. The incident's correlation key is `ticket:<reference>`, so a later comment on the same ticket counts as a repeat and a resolved ticket counts as recovery.
 
