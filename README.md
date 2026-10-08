@@ -37,6 +37,11 @@ User authentication can be used instead of `PLACE_API_KEY`. All of the following
 - `OPENAI_API_BASE` = alternate OpenAI-compatible or Azure OpenAI API base URL
 - `OPENAI_MODEL` = model used for incident analysis (default: `gpt-4o-mini`)
 
+### Service Desk Tickets
+
+- `TICKET_WEBHOOK_TOKEN` = shared token a service desk must send as the `X-Ticket-Token` header or the `token` query parameter on `POST /api/ai-support/v1/tickets` and `POST /api/ai-support/v1/tickets/jira`. No check when unset.
+- `TICKET_EXTRACTION_MODEL` = model used to read tickets (default: `OPENAI_MODEL`). Ticket reading works without a model; the model adds names and symptoms the regular expressions miss.
+
 ### Playbooks And Report Templates
 
 - `PLAYBOOKS_PATH` = workflow and procedure catalogue root (default: auto-discovered `playbooks` directory)
@@ -88,6 +93,30 @@ Skipped deliveries (including maintenance suppression) and rendering failures do
 - `SG_PROCESS_COUNT` = HTTP server worker count (default: `1`)
 - `LOG_LEVEL` = log severity (default: `info` in production, `debug` otherwise)
 - `PLACE_COMMIT` = commit identifier embedded at build time (default: `DEV`)
+
+## Service Desk Tickets
+
+A support ticket enters the same incident workflow as a webhook. `POST /api/ai-support/v1/tickets` takes a normalised ticket:
+
+```json
+{
+  "reference": "SD-8601",
+  "summary": "Module Error Stopping Azure AD to PlaceOS User Sync",
+  "description": "One of the modules was throwing an error and stopping the user sync.",
+  "organisation": "Suncorp",
+  "priority": "Medium",
+  "request_type": "Report a bug",
+  "reporter_email": "reporter@example.com",
+  "event": "created",
+  "resolved": false,
+  "comments": [{"author": "Reporter", "body": "Still failing today", "public": true}],
+  "attachments": [{"filename": "error.png", "mime_type": "image/png"}]
+}
+```
+
+`POST /api/ai-support/v1/tickets/jira` takes a Jira Cloud webhook body (issue created, updated or commented) or a Jira issue document and normalises it. `GET /api/ai-support/v1/tickets/:reference` returns the incident for a ticket.
+
+The service reads the ticket for PlaceOS ids, hostnames, room and module names, an environment and error text, then looks the names up through the PlaceOS REST API (`domains`, `systems`, `zones`, `modules` searches). One clear match sets the incident's module or system; several equally good matches are recorded as candidates and the incident escalates for a person to choose. The incident's correlation key is `ticket:<reference>`, so a later comment on the same ticket counts as a repeat and a resolved ticket counts as recovery.
 
 ## Development
 

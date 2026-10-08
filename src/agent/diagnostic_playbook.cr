@@ -383,6 +383,7 @@ module AISupportAgent
       in .webhook?      then "webhook"
       in .module_state? then "module_state"
       in .scheduled?    then "scheduled"
+      in .ticket?       then "ticket"
       end
     end
   end
@@ -509,7 +510,7 @@ module AISupportAgent
     SOURCE_PATH      = File.expand_path("../../playbooks/diagnostics", __DIR__)
     DIAGNOSTIC_TOOLS = PlaybookStep::TOOL_CONTEXT.keys
     CONTEXT_FIELDS   = ["tenant_id", "system_id", "module_id", "module_name", "module_index"]
-    SOURCES          = ["grafana", "webhook", "module_state", "scheduled"]
+    SOURCES          = ["grafana", "webhook", "module_state", "scheduled", "ticket"]
 
     class Error < Exception
     end
