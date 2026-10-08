@@ -1,0 +1,17 @@
+$schema: ../schemas/remediation.v1.json
+schema_version: remediation-procedure.v1
+id: restart-core-service
+version: 1
+name: Restart the core service to reload modules
+mode: remediation
+priority: 100
+matches:
+  classifications: [modules_not_loaded]
+  minimum_confidence: 0.6
+  required_context: [system_id]
+proposal:
+  action: restart-service
+  risk_level: medium
+  approval_required: true
+  policy_basis: Cluster evidence shows modules the system expects are not loaded on any core node; an operator must confirm the outage window before core is restarted.
+  verification: verification:system-modules-recovery@1

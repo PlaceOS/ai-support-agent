@@ -1,0 +1,42 @@
+$schema: ../schemas/diagnostic.v1.json
+schema_version: diagnostic-procedure.v1
+id: api-timeout
+classification: api_timeout
+version: 1
+name: API Request Timeout
+mode: diagnostic
+priority: 105
+matches:
+  patterns:
+    - '(?i)(?:\bapi|\brequests?|endpoints?|queries|\bquery|ingress|gateway|staff[- ]api|rest[- ]api)[^"]{0,40}(?:timeout|timed out|time-?out|504|taking (?:too )?long|very slow)|504 gateway|gateway time-?out|ingress (?:closed|closing|timeout)'
+steps:
+  - id: platform-version
+    tool: platform_version
+    io_timeout_seconds: 5
+    requires: []
+  - id: cluster-status
+    tool: cluster_status
+    io_timeout_seconds: 15
+    requires: []
+  - id: system-details
+    tool: system_details
+    io_timeout_seconds: 5
+    requires: [system_id]
+analysis:
+  hypotheses:
+    - The request runs longer than the ingress or proxy allows, 30 seconds on OpenShift by default.
+    - The data set the request covers has grown past what one request can return in time.
+    - The api or staff-api pods are under load.
+  ruled_out:
+    - Device connectivity is not the primary symptom.
+  initial_confidence: 0.6
+  minimum_confidence: 0.65
+  escalate_below: 0.5
+  max_iterations: 1
+  fallback_tools: [system_modules]
+guidance:
+  summary: Measure the request time against the ingress limit and narrow the query by level or date; the limit, not the data, usually cuts the request.
+  operator_steps:
+    - Time the failing request directly against the api pod and against the ingress.
+    - Narrow the request by level or date range and compare.
+    - Ask the cluster owner what idle and request timeouts the ingress applies.

@@ -161,6 +161,18 @@ module AISupportAgent
                    system_evidence(event, io_timeout_seconds)
                  when "core_loaded_processes"
                    core_evidence(event, io_timeout_seconds)
+                 when "module_settings"
+                   module_settings_evidence(event, io_timeout_seconds)
+                 when "driver_details"
+                   driver_evidence(event, io_timeout_seconds)
+                 when "system_modules"
+                   system_modules_evidence(event, io_timeout_seconds)
+                 when "search_consistency"
+                   search_consistency_evidence(event, io_timeout_seconds)
+                 when "cluster_status"
+                   cluster_status_evidence(io_timeout_seconds)
+                 when "platform_version"
+                   platform_version_evidence(io_timeout_seconds)
                  else
                    raise ToolError.new("unknown diagnostic tool #{target}")
                  end
@@ -270,6 +282,236 @@ module AISupportAgent
           data: Redactor.redact(JSON.parse({module_id: module_id, core_nodes: matches}.to_json))
         ),
       ]
+    end
+
+    # Collated settings keys at every level above the module, against the keys
+    # the driver's settings schema declares. A key the driver declares that no
+    # level sets is a default added to the driver after the module was created.
+    # Field names avoid the word "key" because `Redactor` blanks such fields.
+    private def module_settings_evidence(event : IncidentEvent, io_timeout_seconds : Int32) : Array(Evidence)
+      return [] of Evidence unless client = @client
+      return [] of Evidence unless module_id = event.module_id.presence
+
+      settings = rest_json(client, "/api/engine/v2/modules/#{URI.encode_path_segment(module_id)}/settings", io_timeout_seconds).as_a
+      levels = settings.map do |setting|
+        data = setting.as_h
+        {
+          parent_id:        data["parent_id"]?,
+          parent_type:      data["parent_type"]?,
+          encryption_level: data["encryption_level"]?,
+          settings:         string_array(data["keys"]?),
+        }
+      end
+      effective = levels.flat_map(&.[:settings]).uniq!
+
+      details = rest_json(client, "/api/engine/v2/modules/#{URI.encode_path_segment(module_id)}", io_timeout_seconds).as_h
+      driver_id = details["driver_id"]?.try(&.as_s?)
+      declared = [] of String
+      required = [] of String
+      if driver_id
+        driver = rest_json(client, "/api/engine/v2/drivers/#{URI.encode_path_segment(driver_id)}", io_timeout_seconds).as_h
+        schema = settings_schema(driver["json_schema"]?)
+        declared = schema.try(&.["properties"]?).try(&.as_h?).try(&.keys) || [] of String
+        required = string_array(schema.try(&.["required"]?))
+      end
+
+      [
+        Evidence.new(
+          source: "placeos_rest_api",
+          message: "Fetched collated module settings through PlaceOS::Client",
+          data: Redactor.redact(JSON.parse({
+            module_id:                 module_id,
+            driver_id:                 driver_id,
+            levels:                    levels,
+            effective_settings:        effective,
+            driver_settings:           declared,
+            driver_required_settings:  required,
+            missing_settings:          declared - effective,
+            missing_required_settings: required - effective,
+          }.to_json))
+        ),
+      ]
+    end
+
+    # The driver behind the module: identity, commit, update state and whether
+    # the build service has a compiled binary for it.
+    private def driver_evidence(event : IncidentEvent, io_timeout_seconds : Int32) : Array(Evidence)
+      return [] of Evidence unless client = @client
+      return [] of Evidence unless module_id = event.module_id.presence
+
+      details = rest_json(client, "/api/engine/v2/modules/#{URI.encode_path_segment(module_id)}", io_timeout_seconds).as_h
+      driver_id = details["driver_id"]?.try(&.as_s?) || raise ToolError.new("module #{module_id} has no driver id")
+      driver = rest_json(client, "/api/engine/v2/drivers/#{URI.encode_path_segment(driver_id)}", io_timeout_seconds).as_h
+
+      compiled = true
+      compile_message = nil.as(String?)
+      begin
+        result = rest_json(client, "/api/engine/v2/drivers/#{URI.encode_path_segment(driver_id)}/compiled", io_timeout_seconds)
+        compile_message = result.as_h?.try(&.["compilation_output"]?).try(&.as_s?).try(&.[0, 2000])
+      rescue error : ToolError
+        compiled = false
+        compile_message = error.message
+      end
+
+      [
+        Evidence.new(
+          source: "placeos_rest_api",
+          message: "Fetched driver details through PlaceOS::Client",
+          data: Redactor.redact(JSON.parse({
+            module_id:          module_id,
+            driver_id:          driver_id,
+            name:               driver["name"]?,
+            module_name:        driver["module_name"]?,
+            role:               driver["role"]?,
+            commit:             driver["commit"]?,
+            repository_id:      driver["repository_id"]?,
+            file_name:          driver["file_name"]?,
+            update_available:   driver["update_available"]?,
+            update_info:        driver["update_info"]?,
+            compiled:           compiled,
+            compilation_output: compile_message || driver["compilation_output"]?.try(&.as_s?).try(&.[0, 2000]),
+          }.to_json))
+        ),
+      ]
+    end
+
+    # Every module in the system with its running, connected and error flags.
+    private def system_modules_evidence(event : IncidentEvent, io_timeout_seconds : Int32) : Array(Evidence)
+      return [] of Evidence unless client = @client
+      return [] of Evidence unless system_id = event.system_id.presence
+
+      path = "/api/engine/v2/modules/?control_system_id=#{URI.encode_path_segment(system_id)}&limit=500"
+      modules = rest_json(client, path, io_timeout_seconds).as_a.map do |mod|
+        data = mod.as_h
+        {
+          id:                data["id"]?,
+          name:              data["custom_name"]?.try(&.as_s?).presence || data["name"]?.try(&.as_s?),
+          driver_id:         data["driver_id"]?,
+          role:              data["role"]?,
+          running:           data["running"]?,
+          connected:         data["connected"]?,
+          ignore_connected:  data["ignore_connected"]?,
+          has_runtime_error: data["has_runtime_error"]?,
+        }
+      end
+      summary = {
+        total:          modules.size,
+        stopped:        modules.count { |mod| mod[:running].try(&.as_bool?) == false },
+        disconnected:   modules.count { |mod| mod[:connected].try(&.as_bool?) == false && mod[:ignore_connected].try(&.as_bool?) != true },
+        runtime_errors: modules.count { |mod| mod[:has_runtime_error].try(&.as_bool?) == true },
+      }
+
+      [
+        Evidence.new(
+          source: "placeos_rest_api",
+          message: "Fetched the system's modules through PlaceOS::Client",
+          data: Redactor.redact(JSON.parse({system_id: system_id, summary: summary, modules: modules}.to_json))
+        ),
+      ]
+    end
+
+    # Whether the system that exists by id is also returned by name search and
+    # by its zone listing; a system found only by id has a stale search index.
+    private def search_consistency_evidence(event : IncidentEvent, io_timeout_seconds : Int32) : Array(Evidence)
+      return [] of Evidence unless client = @client
+      return [] of Evidence unless system_id = event.system_id.presence
+
+      system = rest_json(client, "/api/engine/v2/systems/#{URI.encode_path_segment(system_id)}", io_timeout_seconds).as_h
+      name = system["name"]?.try(&.as_s?) || ""
+      zones = string_array(system["zones"]?)
+
+      by_search = rest_json(client, "/api/engine/v2/systems/?#{URI::Params.encode({"q" => name, "limit" => "50"})}", io_timeout_seconds).as_a
+      found_by_search = by_search.any? { |item| item.as_h["id"]?.try(&.as_s?) == system_id }
+      zone_checked = zones.first?
+      found_by_zone = nil.as(Bool?)
+      if zone_checked
+        by_zone = rest_json(client, "/api/engine/v2/systems/?#{URI::Params.encode({"zone_id" => zone_checked, "limit" => "1000"})}", io_timeout_seconds).as_a
+        found_by_zone = by_zone.any? { |item| item.as_h["id"]?.try(&.as_s?) == system_id }
+      end
+
+      [
+        Evidence.new(
+          source: "placeos_rest_api",
+          message: "Checked the system against search and zone listings through PlaceOS::Client",
+          data: Redactor.redact(JSON.parse({
+            system_id:       system_id,
+            name:            name,
+            found_by_id:     true,
+            found_by_search: found_by_search,
+            zone_checked:    zone_checked,
+            found_by_zone:   found_by_zone,
+            index_stale:     !found_by_search || found_by_zone == false,
+          }.to_json))
+        ),
+      ]
+    end
+
+    # Core nodes with load and the number of drivers and modules each has loaded.
+    private def cluster_status_evidence(io_timeout_seconds : Int32) : Array(Evidence)
+      return [] of Evidence unless client = @client
+
+      nodes = rest_json(client, "/api/engine/v2/cluster/?include_status=true", io_timeout_seconds).as_a.map do |node|
+        data = node.as_h
+        node_id = data["id"]?.try(&.as_s?)
+        drivers = [] of JSON::Any
+        if node_id
+          drivers = rest_json(client, "/api/engine/v2/cluster/#{URI.encode_path_segment(node_id)}", io_timeout_seconds).as_a
+        end
+        modules_loaded = drivers.sum do |driver|
+          groups = [driver.as_h["local"]?] + (driver.as_h["edge"]?.try(&.as_h?).try(&.values) || [] of JSON::Any)
+          groups.sum { |group| group.try(&.as_h?).try(&.["modules"]?).try(&.as_a?).try(&.size) || 0 }
+        end
+        {id: node_id, uri: data["uri"]?, load: data["load"]?, status: data["status"]?, drivers_loaded: drivers.size, modules_loaded: modules_loaded}
+      end
+
+      [
+        Evidence.new(
+          source: "placeos_rest_api",
+          message: "Fetched core cluster status through PlaceOS::Client",
+          data: Redactor.redact(JSON.parse({
+            node_count:           nodes.size,
+            total_modules_loaded: nodes.sum(&.[:modules_loaded]),
+            nodes:                nodes,
+          }.to_json))
+        ),
+      ]
+    end
+
+    # The running versions of the REST API, the core nodes and the platform release.
+    private def platform_version_evidence(io_timeout_seconds : Int32) : Array(Evidence)
+      return [] of Evidence unless client = @client
+
+      api = rest_json(client, "/api/engine/v2/version", io_timeout_seconds)
+      cores = begin
+        rest_json(client, "/api/engine/v2/cluster/versions", io_timeout_seconds)
+      rescue error : ToolError
+        JSON.parse({error: error.message}.to_json)
+      end
+      platform = begin
+        rest_json(client, "/api/engine/v2/platform", io_timeout_seconds)
+      rescue error : ToolError
+        JSON.parse({error: error.message}.to_json)
+      end
+
+      [
+        Evidence.new(
+          source: "placeos_rest_api",
+          message: "Fetched platform versions through PlaceOS::Client",
+          data: Redactor.redact(JSON.parse({rest_api: api, core_nodes: cores, platform: platform}.to_json))
+        ),
+      ]
+    end
+
+    private def settings_schema(value : JSON::Any?) : JSON::Any?
+      return unless value
+      case raw = value.raw
+      when String then JSON.parse(raw) rescue nil
+      when Hash   then value
+      end
+    end
+
+    private def string_array(value : JSON::Any?) : Array(String)
+      value.try(&.as_a?).try(&.compact_map(&.as_s?)) || [] of String
     end
 
     private def driver_contains_module?(driver : JSON::Any, module_id : String) : Bool

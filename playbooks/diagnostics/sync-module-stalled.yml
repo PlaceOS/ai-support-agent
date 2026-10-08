@@ -1,0 +1,55 @@
+$schema: ../schemas/diagnostic.v1.json
+schema_version: diagnostic-procedure.v1
+id: sync-module-stalled
+classification: sync_stalled
+version: 1
+name: Sync Module Stalled
+mode: diagnostic
+priority: 120
+matches:
+  patterns:
+    - '(?i)sync[a-z]*[^"]{0,40}(?:fail|error|stop|broke|stalled|stuck|not (?:work|run|happen|updat)|has ?n.?t run|did ?n.?t run|issue)|not sync(?:ing|ed|hroni)|out of sync'
+steps:
+  - id: module-details
+    tool: module_details
+    io_timeout_seconds: 5
+    requires: [module_id]
+  - id: module-state
+    tool: module_state
+    io_timeout_seconds: 5
+    depends_on: [module-details]
+    requires: [module_id]
+  - id: runtime-logs
+    tool: module_error_logs
+    io_timeout_seconds: 10
+    depends_on: [module-details]
+    requires: [module_id]
+  - id: module-settings
+    tool: module_settings
+    io_timeout_seconds: 10
+    depends_on: [module-details]
+    requires: [module_id]
+  - id: driver-details
+    tool: driver_details
+    io_timeout_seconds: 10
+    depends_on: [module-details]
+    requires: [module_id]
+analysis:
+  hypotheses:
+    - The module stopped or lost its schedule after a core restart.
+    - The credentials or endpoint of the sync source changed.
+    - A required setting is missing after a driver update.
+    - The sync ran but rejected its input.
+  ruled_out:
+    - Device connectivity is not the primary symptom.
+  initial_confidence: 0.7
+  minimum_confidence: 0.65
+  escalate_below: 0.5
+  max_iterations: 2
+  fallback_tools: [system_details, core_loaded_processes]
+guidance:
+  summary: Check that the module is running and read its last error, then confirm the sync source credentials and the schedule; a manual run from Backoffice shows whether the schedule or the sync itself is at fault.
+  operator_steps:
+    - Confirm the module is running and read its most recent error.
+    - Run the sync manually from Backoffice; if that works, the schedule or trigger is at fault.
+    - Confirm the credentials and endpoint for the sync source are current.

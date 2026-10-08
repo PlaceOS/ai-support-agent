@@ -29,6 +29,21 @@ module AISupportAgent
         "Renew or replace the affected TLS certificate after an operator validates its identity and trust chain.",
         ["module_id"]
       ),
+      "add-module-setting" => RemediationAction.new(
+        "add-module-setting",
+        "Add the driver setting the module is missing after an operator confirms the value to use.",
+        ["module_id"]
+      ),
+      "restart-service" => RemediationAction.new(
+        "restart-service",
+        "Restart the affected PlaceOS service (core, rest-api or search-ingest) after an operator confirms the outage window.",
+        [] of String
+      ),
+      "reindex-search" => RemediationAction.new(
+        "reindex-search",
+        "Re-index the search data after an operator checks the platform version; on releases before 2.2509.1 restart search-ingest instead of using the Backoffice re-index.",
+        ["system_id"]
+      ),
     }
 
     def self.find(id : String) : RemediationAction?

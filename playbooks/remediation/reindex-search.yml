@@ -1,0 +1,17 @@
+$schema: ../schemas/remediation.v1.json
+schema_version: remediation-procedure.v1
+id: reindex-search
+version: 1
+name: Rebuild the search index for the affected records
+mode: remediation
+priority: 100
+matches:
+  classifications: [search_index_stale]
+  minimum_confidence: 0.65
+  required_context: [system_id]
+proposal:
+  action: reindex-search
+  risk_level: low
+  approval_required: true
+  policy_basis: Search evidence shows a record that exists by id but not in the listings; an operator must choose between a backfill and a search-ingest restart for the running release.
+  verification: verification:system-search-recovery@1

@@ -1,0 +1,49 @@
+$schema: ../schemas/diagnostic.v1.json
+schema_version: diagnostic-procedure.v1
+id: missing-required-setting
+classification: missing_setting
+version: 1
+name: Missing Driver Setting
+mode: diagnostic
+priority: 130
+matches:
+  patterns:
+    - '(?i)(?:missing|required|undefined|no) (?:the )?(?:setting|configuration|config key)|setting (?:is )?(?:missing|not set|required)|missing (?:hash )?key|keyerror|key not found|undefined method|nil assertion|not configured'
+steps:
+  - id: module-details
+    tool: module_details
+    io_timeout_seconds: 5
+    requires: [module_id]
+  - id: module-settings
+    tool: module_settings
+    io_timeout_seconds: 10
+    depends_on: [module-details]
+    requires: [module_id]
+  - id: driver-details
+    tool: driver_details
+    io_timeout_seconds: 10
+    depends_on: [module-details]
+    requires: [module_id]
+  - id: runtime-logs
+    tool: module_error_logs
+    io_timeout_seconds: 10
+    depends_on: [module-details]
+    requires: [module_id]
+analysis:
+  hypotheses:
+    - A setting the driver declares is not set at any level above the module.
+    - The driver gained a new default after the module was created; defaults in driver code do not apply to existing modules.
+    - A credential or address setting holds a stale value.
+  ruled_out:
+    - Network reachability is not the primary symptom.
+  initial_confidence: 0.7
+  minimum_confidence: 0.65
+  escalate_below: 0.5
+  max_iterations: 2
+  fallback_tools: [module_state, system_details]
+guidance:
+  summary: Compare the keys the driver declares with the keys set on the module and its zones, then add the missing key at the module level.
+  operator_steps:
+    - Open the module's settings in Backoffice and compare them with the keys the driver declares.
+    - Add the missing key at the module level with the value the site uses; a new driver default does not apply to existing modules.
+    - Restart the module after saving the setting and watch the error log clear.

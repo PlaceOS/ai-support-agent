@@ -37,9 +37,9 @@ module AISupportAgent
       status.playbook_path.should eq "playbooks"
       status.playbook_reload_error.should be_nil
       status.workflow_count.should eq 1
-      status.diagnostic_procedure_count.should eq 8
-      status.remediation_procedure_count.should eq 3
-      status.verification_procedure_count.should eq 2
+      status.diagnostic_procedure_count.should eq 15
+      status.remediation_procedure_count.should eq 6
+      status.verification_procedure_count.should eq 4
       status.verification_run_count.should eq 0
       status.escalation_procedure_count.should eq 2
       status.escalation_record_count.should eq 0

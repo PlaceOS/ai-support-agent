@@ -1,0 +1,43 @@
+$schema: ../schemas/diagnostic.v1.json
+schema_version: diagnostic-procedure.v1
+id: driver-compile-failure
+classification: driver_compile_failure
+version: 1
+name: Driver Compile Failure
+mode: diagnostic
+priority: 125
+matches:
+  patterns:
+    - '(?i)compil(?:e|ation|er) (?:error|fail|issue|problem)|fail(?:ed|s|ure)? to compile|not compiled|does ?n.?t compile|won.?t compile|recompil|build (?:service|server) |driver (?:update|build|commit)s? (?:fail|error|not loading)|unable to update the driver|commit details error|driver not compiled'
+steps:
+  - id: module-details
+    tool: module_details
+    io_timeout_seconds: 5
+    requires: [module_id]
+  - id: driver-details
+    tool: driver_details
+    io_timeout_seconds: 15
+    depends_on: [module-details]
+    requires: [module_id]
+  - id: platform-version
+    tool: platform_version
+    io_timeout_seconds: 5
+    requires: []
+analysis:
+  hypotheses:
+    - The driver's current commit does not compile against the shards on the build service.
+    - An older commit is selected that no longer compiles on the current platform.
+    - The build service cannot be reached from this cluster because of a proxy or firewall.
+  ruled_out:
+    - The device and the network are not the primary symptom.
+  initial_confidence: 0.7
+  minimum_confidence: 0.65
+  escalate_below: 0.5
+  max_iterations: 2
+  fallback_tools: [module_state]
+guidance:
+  summary: Read the compilation output for the driver commit and move the driver to a commit that builds; if the build service cannot be reached, check the cluster's egress.
+  operator_steps:
+    - Read the compilation output on the driver and the commit it points at.
+    - Select a recent commit of the driver that compiles on this platform, or fix the driver source.
+    - If every driver fails to build, check that the cluster can reach the build service.

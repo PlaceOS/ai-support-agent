@@ -1,0 +1,17 @@
+$schema: ../schemas/remediation.v1.json
+schema_version: remediation-procedure.v1
+id: add-missing-setting
+version: 1
+name: Add the missing driver setting to the module
+mode: remediation
+priority: 100
+matches:
+  classifications: [missing_setting]
+  minimum_confidence: 0.65
+  required_context: [module_id]
+proposal:
+  action: add-module-setting
+  risk_level: low
+  approval_required: true
+  policy_basis: Settings evidence names a key the driver declares that no level sets; an operator must confirm the value before it is added.
+  verification: verification:module-runtime-recovery@1

@@ -1,0 +1,43 @@
+$schema: ../schemas/diagnostic.v1.json
+schema_version: diagnostic-procedure.v1
+id: search-index-stale
+classification: search_index_stale
+version: 1
+name: Search Index Stale
+mode: diagnostic
+priority: 120
+matches:
+  patterns:
+    - '(?i)(?:not|isn.?t|does ?n.?t|did ?n.?t|no longer|never) (?:appear|show|visible|reflected|listed|found|display|come up)[^"]{0,60}(?:backoffice|back office|back-office|systems? (?:api|list|page)|zone|search|maps?|list)|newly (?:added|created) (?:room|system|desk|zone|level)|new (?:room|system)s? (?:is |are |was |were )?(?:not|missing)|re-?index|backfill|elasticsearch|search-ingest|search ingest'
+steps:
+  - id: system-details
+    tool: system_details
+    io_timeout_seconds: 5
+    requires: [system_id]
+  - id: search-consistency
+    tool: search_consistency
+    io_timeout_seconds: 15
+    depends_on: [system-details]
+    requires: [system_id]
+  - id: platform-version
+    tool: platform_version
+    io_timeout_seconds: 5
+    requires: []
+analysis:
+  hypotheses:
+    - The search index did not receive the record, so the system exists only when read by id.
+    - search-ingest lost its connection to the index after a restart.
+    - The record sits in a zone the listing does not cover.
+  ruled_out:
+    - The record itself is present when read by id.
+  initial_confidence: 0.65
+  minimum_confidence: 0.65
+  escalate_below: 0.5
+  max_iterations: 1
+  fallback_tools: [system_modules]
+guidance:
+  summary: Compare the system by id against the name search and the zone listing; restart search-ingest and run a backfill, and on releases before 2.2509.1 do not use the Backoffice re-index.
+  operator_steps:
+    - Read the system by id, then search it by name and list its zone; a record found only by id has a stale index.
+    - Restart search-ingest and run a backfill.
+    - On releases before 2.2509.1 do not click re-index in Backoffice; it empties the listings until search-ingest is restarted.
