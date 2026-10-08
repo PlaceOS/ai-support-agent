@@ -38,6 +38,16 @@ module AISupportAgent
   class_getter correlation : CorrelationEngine { CorrelationEngine.new(workflow_catalog, incidents, correlation_findings) }
   class_getter trends : TrendReporter { TrendReporter.new(workflow_catalog, incidents, correlation_findings, feedback, trend_reports) }
   class_getter module_runtime_error_resource : ModuleRuntimeErrorResource { ModuleRuntimeErrorResource.new }
+  class_getter ticket_extractor : TicketExtractor { TicketExtractor.from_environment }
+  class_getter ticket_resolver : TicketResolver { TicketResolver.new(context) }
+
+  # Reads a service desk ticket, matches it to PlaceOS records and runs it
+  # through the incident workflow under the correlation key `ticket:<reference>`.
+  def self.ingest_ticket(ticket : SupportTicket) : IncidentReport
+    extraction = ticket_extractor.extract(ticket)
+    resolution = ticket_resolver.resolve(extraction)
+    ingest(TicketIngest.event_for(ticket, extraction, resolution))
+  end
 
   def self.ingest(
     event : IncidentEvent,

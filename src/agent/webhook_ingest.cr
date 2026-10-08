@@ -68,6 +68,8 @@ module AISupportAgent
         IncidentSource::ModuleState
       when "scheduled"
         IncidentSource::Scheduled
+      when "ticket"
+        IncidentSource::Ticket
       else
         IncidentSource::Webhook
       end

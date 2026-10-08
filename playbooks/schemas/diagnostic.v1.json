@@ -42,7 +42,7 @@
         "patterns": { "type": "array", "items": { "type": "string", "minLength": 1 }, "default": [] },
         "sources": {
           "type": "array",
-          "items": { "enum": ["grafana", "webhook", "module_state", "scheduled"] },
+          "items": { "enum": ["grafana", "webhook", "module_state", "scheduled", "ticket"] },
           "default": []
         },
         "required_context": {

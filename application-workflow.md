@@ -52,6 +52,7 @@ When Postgres is not configured, the service can still process webhooks using in
 | Module runtime-error changefeed | `PlaceOS::Resource(PlaceOS::Model::Module)` observes a created or updated module with `has_runtime_error` set | Shared Postgres configuration                          | One module-state incident event                                   |
 | Scheduled maintenance           | Tasker invokes a repository maintenance procedure according to its cron expression and time zone              | PlaceOS REST context is configured                     | One scheduled event per selected module and referenced diagnostic |
 | Manual maintenance              | An operator sends `POST /api/ai-support/v1/maintenance/:id/runs`                                              | The maintenance procedure exists                       | The same flow as scheduled maintenance                            |
+| Service desk ticket             | A service desk sends `POST /api/ai-support/v1/tickets` (normalised) or `POST /api/ai-support/v1/tickets/jira` (Jira webhook) | The sender holds the ticket webhook token when one is configured | One ticket incident event under `ticket:<reference>`              |
 
 The runtime-error changefeed consumes module model changes already produced by the existing Triggers/Loki error scanner. The service does not currently subscribe directly to Redis module-state channels.
 
@@ -80,6 +81,16 @@ Every source is converted into one typed incident event containing:
 Webhook adapters translate source-specific JSON into this common contract. Scheduled maintenance constructs the same contract directly. Sensitive payload values are redacted before diagnostic selection, evidence storage, or AI analysis.
 
 This shared event contract means reactive webhooks, PlaceOS-native runtime errors, and proactive maintenance all enter the same investigation workflow.
+
+### Ticket Reading and Matching
+
+A ticket carries prose, not ids. Before normalization the service:
+
+1. Reads the ticket deterministically: PlaceOS ids (`mod-`, `sys-`, `zone-`, `driver-`), hostnames, integration and device names, room and building names, an environment (production, PPE, UAT, dev), error lines, a category and an urgency.
+2. When OpenAI is configured, asks the model for the same fields as JSON and layers its answer over the deterministic one. A failed or unusable reply keeps the deterministic reading.
+3. Matches names to PlaceOS records through the REST API: an authority by hostname, a system or module by id, otherwise a system by name search narrowed by any zone the ticket names, then a module by name search inside that system or across the instance.
+
+One clear match sets the incident's tenant, system and module scope. Several equally good matches, or none, leave the scope blank and record every candidate and the reason, so the incident escalates with the reading attached. The ticket, the reading and the resolution travel in the event payload and appear in the report's inbound evidence.
 
 ## 4. Active Incident Lifecycle
 

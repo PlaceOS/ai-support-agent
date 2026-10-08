@@ -4,6 +4,7 @@ module AISupportAgent
     Webhook
     ModuleState
     Scheduled
+    Ticket
   end
 
   enum IncidentSeverity

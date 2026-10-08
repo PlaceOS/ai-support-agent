@@ -73,6 +73,10 @@ module AISupportAgent
       @configuration_error.nil?
     end
 
+    def rest_available? : Bool
+      configured? && !@client.nil?
+    end
+
     def evidence_for(event : IncidentEvent) : ContextEvidence
       if evidence = @static_evidence
         return ContextEvidence.new(evidence)
@@ -126,6 +130,16 @@ module AISupportAgent
                   end
                 end
       filter_maintenance_targets(targets, scope)
+    end
+
+    # A GET against the PlaceOS REST API, parsed. Raises `ToolError` when the API
+    # is not configured or answers with an error status.
+    def get_json(path : String, io_timeout_seconds : Int32 = 10) : JSON::Any
+      if configuration_error = @configuration_error
+        raise ToolError.new(configuration_error)
+      end
+      raise ToolError.new("PlaceOS REST API client is unavailable") unless client = @client
+      rest_json(client, path, io_timeout_seconds)
     end
 
     def execute(target : String, event : IncidentEvent, io_timeout_seconds : Int32 = 10) : DiagnosticToolResult
