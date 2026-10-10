@@ -56,6 +56,10 @@ When Postgres is not configured, the service can still process webhooks using in
 
 The runtime-error changefeed consumes module model changes already produced by the existing Triggers/Loki error scanner. The service does not currently subscribe directly to Redis module-state channels.
 
+### Service Desk Write-Back
+
+When Jira is configured, a new ticket incident posts an internal triage note on the ticket (what was read, what matched, classification, evidence, next steps, and a suggested reply with the questions a support engineer asks first), and a ticket a person resolved without a Root cause gets the field filled from the report. The agent never changes a ticket's status or sends a public reply; a person does. Each write is a delivery record on the incident.
+
 ### Operator-Driven Follow-Up
 
 These requests do not create a fresh diagnosis:
