@@ -41,6 +41,8 @@ User authentication can be used instead of `PLACE_API_KEY`. All of the following
 
 - `TICKET_WEBHOOK_TOKEN` = shared token a service desk must send as the `X-Ticket-Token` header or the `token` query parameter on `POST /api/ai-support/v1/tickets` and `POST /api/ai-support/v1/tickets/jira`. No check when unset.
 - `TICKET_EXTRACTION_MODEL` = model used to read tickets (default: `OPENAI_MODEL`). Ticket reading works without a model; the model adds names and symptoms the regular expressions miss.
+- `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` = the Jira Cloud site and the account the agent writes as. When all three are set, a new ticket gets an internal triage note and a resolved ticket gets its Root cause field filled in when a person left it empty. Unset, the writes are recorded as skipped deliveries.
+- `JIRA_ROOT_CAUSE_FIELD` = the Root cause custom field id (default: `customfield_10035`).
 
 ### Playbooks And Report Templates
 
@@ -117,6 +119,8 @@ A support ticket enters the same incident workflow as a webhook. `POST /api/ai-s
 Point the Jira webhook at `/tickets/jira` with a JQL filter that excludes request types the agent should not investigate (map changes, commercial requests); every ticket it receives becomes an incident. `POST /api/ai-support/v1/tickets/jira` takes a Jira Cloud webhook body (issue created, updated or commented) or a Jira issue document and normalises it. `GET /api/ai-support/v1/tickets/:reference` returns the incident for a ticket.
 
 The service reads the ticket for PlaceOS ids, hostnames, room and module names, an environment and error text, then looks the names up through the PlaceOS REST API (`domains`, `systems`, `zones`, `modules` searches). One clear match sets the incident's module or system; several equally good matches are recorded as candidates and the incident escalates for a person to choose. The incident's correlation key is `ticket:<reference>`, so a later comment on the same ticket counts as a repeat and a resolved ticket counts as recovery.
+
+With Jira configured, the agent writes back to the ticket the way a support engineer would on first contact: an internal (agent-only) comment with what it read, what it matched or the candidates it could not choose between, the classification and evidence, the next steps, and a suggested reply to the reporter including the questions a support engineer would ask (environment, which room or system, the error text rather than a screenshot). A person decides whether to send the reply. When a person resolves the ticket and leaves Root cause empty, the agent fills it with its classification and the evidence. Each write leaves a delivery record on the incident (`jira:<key>:triage`, `jira:<key>:root_cause`).
 
 ## Development
 

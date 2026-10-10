@@ -40,13 +40,23 @@ module AISupportAgent
   class_getter module_runtime_error_resource : ModuleRuntimeErrorResource { ModuleRuntimeErrorResource.new }
   class_getter ticket_extractor : TicketExtractor { TicketExtractor.from_environment }
   class_getter ticket_resolver : TicketResolver { TicketResolver.new(context) }
+  class_property jira_client : JiraClient? { JiraClient.from_environment }
 
   # Reads a service desk ticket, matches it to PlaceOS records and runs it
   # through the incident workflow under the correlation key `ticket:<reference>`.
+  # A new ticket gets an internal triage note on the service desk; a ticket a
+  # person resolved gets its Root cause field filled in when it was left empty.
   def self.ingest_ticket(ticket : SupportTicket) : IncidentReport
     extraction = ticket_extractor.extract(ticket)
     resolution = ticket_resolver.resolve(extraction)
-    ingest(TicketIngest.event_for(ticket, extraction, resolution))
+    existing = incidents.find_by_correlation_key(TicketIngest.correlation_key(ticket.reference))
+    report = ingest(TicketIngest.event_for(ticket, extraction, resolution))
+    if ticket.resolved?
+      TicketNotes.record_resolution(ticket, report)
+    elsif existing.nil?
+      TicketNotes.triage(ticket, extraction, resolution, report)
+    end
+    report
   end
 
   def self.ingest(

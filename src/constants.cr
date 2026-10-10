@@ -25,6 +25,11 @@ module AISupportAgent
   TICKET_EXTRACTION_MODEL = ENV["TICKET_EXTRACTION_MODEL"]?.presence || OPENAI_MODEL
   TICKET_WEBHOOK_TOKEN    = ENV["TICKET_WEBHOOK_TOKEN"]?.presence
 
+  JIRA_URL              = ENV["JIRA_URL"]?.presence
+  JIRA_EMAIL            = ENV["JIRA_EMAIL"]?.presence
+  JIRA_API_TOKEN        = ENV["JIRA_API_TOKEN"]?.presence
+  JIRA_ROOT_CAUSE_FIELD = ENV["JIRA_ROOT_CAUSE_FIELD"]?.presence || "customfield_10035"
+
   REPORT_WEBHOOK_URL    = ENV["REPORT_WEBHOOK_URL"]?.presence
   REPORT_EMAIL_TO       = ENV["REPORT_EMAIL_TO"]?.to_s.split(',').compact_map(&.strip.presence)
   REPORT_TEMPLATE_ID    = ENV["REPORT_TEMPLATE_ID"]?.presence || "operator-report"
