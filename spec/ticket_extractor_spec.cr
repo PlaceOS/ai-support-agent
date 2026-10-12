@@ -75,6 +75,29 @@ module AISupportAgent
       extraction.systems.should contain "2"
     end
 
+    it "retries once on a new connection when the socket was dropped" do
+      calls = 0
+      WebMock.stub(:post, "#{TICKET_OPENAI_BASE}/chat/completions").to_return do |_request|
+        calls += 1
+        raise IO::EOFError.new("Unexpected end of http response") if calls == 1
+        content = {summary: "Projector will not power on", category: "device", modules: ["Epson projector"]}.to_json
+        reply = {
+          id: "chatcmpl-spec", object: "chat.completion", created: 1_790_000_000, model: "gpt-test",
+          choices: [{index: 0, message: {role: "assistant", content: content}, finish_reason: "stop"}],
+          usage: {prompt_tokens: 10, completion_tokens: 10, total_tokens: 20},
+        }.to_json
+        HTTP::Client::Response.new(200, reply, HTTP::Headers{"Content-Type" => "application/json"})
+      end
+      ticket = SupportTicket.new(reference: "SD-5", summary: "Projector dead in Boardroom 2", description: "The projector will not power on")
+      extractor = TicketExtractor.new(::OpenAI::Client.new("spec-key", TICKET_OPENAI_BASE), "gpt-test")
+
+      extraction = extractor.extract(ticket)
+
+      calls.should eq 2
+      extraction.method.should eq "deterministic+ai"
+      extraction.modules.should contain "Epson projector"
+    end
+
     it "parses a model reply with the expected keys" do
       extraction = TicketExtractor.parse(<<-JSON)
         ```json

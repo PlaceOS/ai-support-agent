@@ -1,3 +1,5 @@
+require "./model_connection"
+
 module AISupportAgent
   # What a ticket says, in the terms the agent can look up.
   struct TicketExtraction
@@ -74,6 +76,7 @@ module AISupportAgent
   # Reads a ticket into a `TicketExtraction`: regular expressions first, then an
   # optional language model pass layered on top. Never raises.
   class TicketExtractor
+    include ModelConnection
     PLACEOS_ID   = /\b(mod|sys|zone|driver)-(?=[A-Za-z0-9~_-]*[0-9A-Z])[A-Za-z0-9~_-]{3,}/
     URL_HOST     = /https?:\/\/([a-z0-9.-]+\.[a-z]{2,})/i
     PLACEOS_HOST = /\b([a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:placeos\.run|placeos\.com|aca\.im))\b/i
@@ -218,7 +221,7 @@ module AISupportAgent
         ]
       )
       request.response_format = ::OpenAI::ResponseFormat.new(::OpenAI::ResponseFormat::FormatType::JsonObject)
-      response = client.chat_completion(request)
+      response = chat_completion(client, request)
       content = response.choices.first?.try(&.message.content).presence
       return unless content
 
