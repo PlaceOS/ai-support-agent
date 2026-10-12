@@ -56,7 +56,7 @@ module AISupportAgent
         next_steps: [] of String
       )
 
-      registry.size.should eq 6
+      registry.size.should eq 7
       selected = registry.select(
         report,
         event,

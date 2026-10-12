@@ -359,6 +359,23 @@ module AISupportAgent
     end
   end
 
+  # A fact the evidence tools must have returned for a playbook to take an incident over after the investigation.
+  class EvidenceRule
+    include YAML::Serializable
+    include YAML::Serializable::Strict
+
+    getter key : String
+    getter equals : YAML::Any
+
+    # @returns whether any evidence item carries `key` with the expected value; values compare as lower-case text
+    def satisfied_by?(items : Array(Evidence)) : Bool
+      items.any? do |item|
+        value = item.data.try(&.as_h?).try(&.[key]?)
+        !value.nil? && value.raw.to_s.downcase == equals.raw.to_s.downcase
+      end
+    end
+  end
+
   class PlaybookMatch
     include YAML::Serializable
     include YAML::Serializable::Strict
@@ -366,6 +383,7 @@ module AISupportAgent
     getter patterns : Array(String) = [] of String
     getter sources : Array(String) = [] of String
     getter required_context : Array(String) = [] of String
+    getter evidence : Array(EvidenceRule) = [] of EvidenceRule
     getter? fallback : Bool = false
 
     @[YAML::Field(ignore: true)]
@@ -377,10 +395,20 @@ module AISupportAgent
 
     def matches?(event : IncidentEvent, payload : JSON::Any) : Bool
       return false unless sources.empty? || sources.includes?(source_key(event.source))
-      return false unless required_context.all? { |field| DiagnosticProcedure.context_present?(field, event) }
+      return false unless context_satisfied?(event)
       return fallback? if patterns.empty?
 
       @compiled_patterns.any?(&.matches?(payload.to_json))
+    end
+
+    def context_satisfied?(event : IncidentEvent) : Bool
+      required_context.all? { |field| DiagnosticProcedure.context_present?(field, event) }
+    end
+
+    # @returns whether every evidence rule holds against the collected evidence; false for a playbook without rules
+    def evidence_matches?(items : Array(Evidence)) : Bool
+      return false if evidence.empty?
+      evidence.all?(&.satisfied_by?(items))
     end
 
     private def source_key(source : IncidentSource) : String
@@ -590,6 +618,19 @@ module AISupportAgent
       @lock.synchronize { @reload_error }
     end
 
+    # @returns the highest-priority playbook whose evidence rules the collected evidence satisfies, when it outranks
+    # `current` or `current` is the fallback
+    def reclassify(event : IncidentEvent, items : Array(Evidence), current : DiagnosticProcedure) : DiagnosticProcedure?
+      refresh_if_changed if @live_reload
+      @lock.synchronize do
+        @playbooks
+          .select { |playbook| playbook.id != current.id && (current.matches.fallback? || playbook.priority > current.priority) }
+          .select { |playbook| playbook.matches.context_satisfied?(event) && playbook.matches.evidence_matches?(items) }
+          .sort_by! { |playbook| {playbook.priority, playbook.version, playbook.id} }
+          .last?
+      end
+    end
+
     def select(
       event : IncidentEvent,
       payload : JSON::Any,
@@ -688,6 +729,9 @@ module AISupportAgent
       end
       if !playbook.matches.fallback? && playbook.matches.patterns.empty?
         raise ValidationError.new("#{playbook.id} must define at least one match pattern")
+      end
+      playbook.matches.evidence.each do |rule|
+        raise ValidationError.new("#{playbook.id} evidence rule key cannot be empty") if rule.key.blank?
       end
       playbook.matches.patterns.each do |pattern|
         raise ValidationError.new("#{playbook.id} match patterns cannot be empty") if pattern.empty?

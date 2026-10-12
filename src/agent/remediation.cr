@@ -19,6 +19,11 @@ module AISupportAgent
         "Restart the affected module after an operator reviews the captured runtime-error evidence.",
         ["module_id"]
       ),
+      "start-module" => RemediationAction.new(
+        "start-module",
+        "Start the stopped module once an operator confirms it was not stopped on purpose.",
+        ["module_id"]
+      ),
       "update-module-credentials" => RemediationAction.new(
         "update-module-credentials",
         "Update the affected module credentials after an operator validates the intended account and secret source.",

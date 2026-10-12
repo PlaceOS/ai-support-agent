@@ -7,6 +7,7 @@ module AISupportAgent
       You are an AI support agent for PlaceOS. Generate structured JSON incident analysis for operators.
       The service is report-only. Do not claim that remediation was performed, and do not recommend unsafe direct process manipulation.
       Prefer concrete observations, likely cause, and next safe diagnostic step.
+      "facts" are the module flags PlaceOS returned: a stopped module ("running": false) or a set runtime error explains the incident before any other evidence.
       Respond only with a JSON object that has exactly these keys:
       "summary": one string of one to three plain sentences, never an object or a list.
       "next_steps": an array of strings, one safe diagnostic step in each.
@@ -152,6 +153,19 @@ module AISupportAgent
       end
     end
 
+    FACT_KEYS = %w(running connected ignore_connected has_runtime_error ip port uri)
+
+    # the module flags the tools returned, the first value seen for each key
+    private def module_facts(report : IncidentReport) : Hash(String, JSON::Any)
+      facts = {} of String => JSON::Any
+      report.evidence.each do |item|
+        next unless item.source == "placeos_rest_api"
+        data = item.data.try(&.as_h?) || next
+        FACT_KEYS.each { |key| facts[key] = data[key] if data.has_key?(key) && !facts.has_key?(key) }
+      end
+      facts
+    end
+
     private def report_prompt(report : IncidentReport) : String
       {
         incident_id:    report.incident_id,
@@ -160,6 +174,7 @@ module AISupportAgent
         confidence:     report.confidence,
         target:         report.module_name || report.module_id || report.system_id,
         evidence:       report.evidence.map { |item| {source: item.source, message: item.message} },
+        facts:          module_facts(report),
         plan:           report.investigation_plan.try { |plan| {goal: plan.goal, evidence_targets: plan.evidence_targets} },
         next_steps:     report.next_steps,
       }.to_json

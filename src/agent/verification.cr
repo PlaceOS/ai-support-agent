@@ -105,7 +105,7 @@ module AISupportAgent
 
   class VerificationProcedureRegistry
     SCHEMA_VERSION = "verification-procedure.v1"
-    CRITERIA       = ["tool_succeeded", "evidence_present", "runtime_error_cleared"]
+    CRITERIA       = ["tool_succeeded", "evidence_present", "runtime_error_cleared", "module_running"]
     CONTEXT_FIELDS = ["tenant_id", "system_id", "module_id", "module_name", "module_index"]
 
     class Error < Exception
@@ -334,6 +334,8 @@ module AISupportAgent
                  result.status.completed? && !result.evidence.empty?
                when "runtime_error_cleared"
                  result.status.completed? && result.evidence.any? { |evidence| runtime_error_cleared?(evidence.data) }
+               when "module_running"
+                 result.status.completed? && result.evidence.any? { |evidence| evidence.data.try(&.as_h?).try(&.["running"]?).try(&.as_bool?) == true }
                else
                  false
                end

@@ -1,0 +1,57 @@
+$schema: ../schemas/diagnostic.v1.json
+schema_version: diagnostic-procedure.v1
+id: module-disconnected
+classification: module_disconnected
+version: 1
+name: Module Disconnected
+mode: diagnostic
+priority: 95
+matches:
+  patterns:
+    - '(?i)\b(?:module|driver)s?\b[^"]{0,40}\b(?:disconnected|not connected|offline)\b|\bdisconnected module'
+  required_context: [module_id]
+  evidence:
+    - key: running
+      equals: true
+    - key: connected
+      equals: false
+    - key: ignore_connected
+      equals: false
+steps:
+  - id: module-details
+    tool: module_details
+    io_timeout_seconds: 5
+    requires: [module_id]
+  - id: module-state
+    tool: module_state
+    io_timeout_seconds: 5
+    depends_on: [module-details]
+    requires: [module_id]
+  - id: connection-logs
+    tool: module_error_logs
+    io_timeout_seconds: 10
+    depends_on: [module-details]
+    requires: [module_id]
+  - id: process-state
+    tool: core_loaded_processes
+    io_timeout_seconds: 5
+    depends_on: [module-details]
+    requires: [module_id]
+analysis:
+  hypotheses:
+    - The driver is running but cannot reach the device or service it controls.
+    - The device is off, unplugged, or on a different address than the module's IP, port or URI.
+    - Credentials or a certificate on the connection changed.
+  ruled_out:
+    - No module restart was attempted during diagnosis.
+  initial_confidence: 0.7
+  minimum_confidence: 0.65
+  escalate_below: 0.5
+  max_iterations: 2
+  fallback_tools: [system_details]
+guidance:
+  summary: The module runs but has no connection to its device or service. Check the device is on and reachable at the configured address, then read the error log for the failure reason.
+  operator_steps:
+    - Confirm the device or service is powered and on the network, and that the module's IP, port or URI still matches it.
+    - Read the module error log for the connection failure (refused, timeout, authentication, certificate).
+    - If the device is fine, restart the module once and watch whether it reconnects.

@@ -1,0 +1,46 @@
+$schema: ../schemas/diagnostic.v1.json
+schema_version: diagnostic-procedure.v1
+id: module-stopped
+classification: module_stopped
+version: 1
+name: Module Stopped
+mode: diagnostic
+priority: 140
+matches:
+  patterns:
+    - '(?i)\b(?:module|driver)s?\b[^"]{0,40}\b(?:stopped|not running|not started|switched off)\b|\bstopped module'
+  required_context: [module_id]
+  evidence:
+    - key: running
+      equals: false
+steps:
+  - id: module-details
+    tool: module_details
+    io_timeout_seconds: 5
+    requires: [module_id]
+  - id: module-state
+    tool: module_state
+    io_timeout_seconds: 5
+    depends_on: [module-details]
+    requires: [module_id]
+  - id: system-modules
+    tool: system_modules
+    io_timeout_seconds: 10
+    requires: [system_id]
+analysis:
+  hypotheses:
+    - The module is stopped, so its driver is not running and nothing it controls responds.
+    - Someone stopped it on purpose, for maintenance or because the device was removed.
+  ruled_out:
+    - No module was started or restarted during diagnosis.
+  initial_confidence: 0.85
+  minimum_confidence: 0.65
+  escalate_below: 0.5
+  max_iterations: 1
+  fallback_tools: [system_details]
+guidance:
+  summary: The module is stopped. Start it in Backoffice and watch whether it stays running; a module that stops again has a runtime error to read.
+  operator_steps:
+    - Check with the site whether the module was stopped on purpose (maintenance, device removed) before starting it.
+    - Open the system in Backoffice, find the module and press Start; start any other stopped modules the system lists.
+    - Watch the module state for a minute; if it stops again, read the runtime error and the module error log.

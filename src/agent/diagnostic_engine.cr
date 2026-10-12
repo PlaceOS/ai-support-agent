@@ -70,6 +70,18 @@ module AISupportAgent
         current_confidence = confidence(playbook, evidence, completed_tools, failed_tools)
       end
 
+      if !target_missing && (override = procedures.reclassify(event, evidence, playbook))
+        investigation << InvestigationStep.new(
+          name: "reclassify_from_evidence",
+          status: InvestigationStepStatus::Completed,
+          summary: "Evidence matched #{override.id} v#{override.version}; reclassified #{classification} as #{override.classification}",
+          evidence_count: evidence.size
+        )
+        playbook = override
+        classification = override.classification
+        current_confidence = {current_confidence, override.analysis.initial_confidence}.max.clamp(0.0, 0.95)
+      end
+
       investigation << InvestigationStep.new(
         name: "classify_symptoms",
         status: InvestigationStepStatus::Completed,
