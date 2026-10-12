@@ -41,11 +41,13 @@ module AISupportAgent
   class_getter ticket_extractor : TicketExtractor { TicketExtractor.from_environment }
   class_getter ticket_resolver : TicketResolver { TicketResolver.new(context) }
   class_property jira_client : JiraClient? { JiraClient.from_environment }
+  class_property google_chat : GoogleChatClient? { GoogleChatClient.from_environment }
 
   # Reads a service desk ticket, matches it to PlaceOS records and runs it
   # through the incident workflow under the correlation key `ticket:<reference>`.
-  # A new ticket gets an internal triage note on the service desk; a ticket a
-  # person resolved gets its Root cause field filled in when it was left empty.
+  # A new ticket gets an internal triage note on the service desk and a message
+  # in the support chat space; a ticket a person resolved gets its Root cause
+  # field filled in when it was left empty.
   def self.ingest_ticket(ticket : SupportTicket) : IncidentReport
     extraction = ticket_extractor.extract(ticket)
     resolution = ticket_resolver.resolve(extraction)
@@ -55,6 +57,7 @@ module AISupportAgent
       TicketNotes.record_resolution(ticket, report)
     elsif existing.nil?
       TicketNotes.triage(ticket, extraction, resolution, report)
+      TicketNotes.announce(ticket, extraction, resolution, report)
     end
     report
   end

@@ -42,6 +42,7 @@ User authentication can be used instead of `PLACE_API_KEY`. All of the following
 - `TICKET_WEBHOOK_TOKEN` = shared token a service desk must send as the `X-Ticket-Token` header or the `token` query parameter on `POST /api/ai-support/v1/tickets` and `POST /api/ai-support/v1/tickets/jira`. No check when unset.
 - `TICKET_EXTRACTION_MODEL` = model used to read tickets (default: `OPENAI_MODEL`). Ticket reading works without a model; the model adds names and symptoms the regular expressions miss.
 - `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` = the Jira Cloud site and the account the agent writes as. When all three are set, a new ticket gets an internal triage note and a resolved ticket gets its Root cause field filled in when a person left it empty. Unset, the writes are recorded as skipped deliveries.
+- `GOOGLE_CHAT_WEBHOOK_URL` = incoming webhook of the Google Chat space the agent announces new tickets in: what it read, what matched, the likely cause and the recommended resolution. Unset, the message is recorded as a skipped delivery.
 - `JIRA_ROOT_CAUSE_FIELD` = the Root cause custom field id (default: `customfield_10035`).
 
 ### Playbooks And Report Templates
