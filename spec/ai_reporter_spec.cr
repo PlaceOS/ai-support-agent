@@ -138,6 +138,35 @@ module AISupportAgent
         analysis.as(AgentAnalysis).summary.should start_with "The HTTP request to the Display service was unauthorized"
       end
 
+      it "retries once on a new connection when the socket was dropped" do
+        calls = 0
+        WebMock.stub(:post, "#{OPENAI_TEST_BASE}/chat/completions").to_return do |_request|
+          calls += 1
+          raise IO::EOFError.new("Unexpected end of http response") if calls == 1
+          HTTP::Client::Response.new(200, AISupportAgent.openai_reply(OBJECT_SUMMARY_REPLY), HTTP::Headers{"Content-Type" => "application/json"})
+        end
+        report = DiagnosticEngine.new(PlaceOSContext.static([] of Evidence), AIReporter.disabled)
+          .report_for(Incident.new("aisup-ai-dropped", AISupportAgent.auth_failure_event("ai-dropped"), Time.utc))
+
+        analysis = AISupportAgent.openai_reporter.analyze(report)
+
+        calls.should eq 2
+        analysis.should be_a AgentAnalysis
+      end
+
+      it "reports a connection that drops twice as a failure" do
+        WebMock.stub(:post, "#{OPENAI_TEST_BASE}/chat/completions").to_return do |_request|
+          raise IO::EOFError.new("Unexpected end of http response")
+        end
+        report = DiagnosticEngine.new(PlaceOSContext.static([] of Evidence), AIReporter.disabled)
+          .report_for(Incident.new("aisup-ai-dropped-twice", AISupportAgent.auth_failure_event("ai-dropped-twice"), Time.utc))
+
+        failure = AISupportAgent.openai_reporter.analyze(report)
+
+        failure.should be_a AIReporter::Failure
+        failure.as(AIReporter::Failure).reason.should eq "the request failed with IO::EOFError"
+      end
+
       it "reports a reply that is not JSON as a failure" do
         WebMock.stub(:post, "#{OPENAI_TEST_BASE}/chat/completions")
           .to_return(body: AISupportAgent.openai_reply("I could not analyse this incident."))

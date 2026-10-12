@@ -1,5 +1,8 @@
+require "./model_connection"
+
 module AISupportAgent
   class AIReporter
+    include ModelConnection
     SYSTEM_PROMPT = <<-PROMPT
       You are an AI support agent for PlaceOS. Generate structured JSON incident analysis for operators.
       The service is report-only. Do not claim that remediation was performed, and do not recommend unsafe direct process manipulation.
@@ -76,7 +79,7 @@ module AISupportAgent
         ]
       )
       request.response_format = ::OpenAI::ResponseFormat.new(::OpenAI::ResponseFormat::FormatType::JsonObject)
-      response = client.chat_completion(request)
+      response = chat_completion(client, request)
 
       content = response.choices.first?.try(&.message.content).presence
       return Failure.new("the model returned no content") unless content
