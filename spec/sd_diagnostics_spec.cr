@@ -2,7 +2,7 @@ require "./helper"
 
 module AISupportAgent
   # the report the catalogue produces for a ticket that reads `text`, with every tool answering from a fixture
-  def self.sd_report(text : String, module_id : String? = "mod-1", system_id : String? = "sys-1") : IncidentReport
+  def self.sd_report(text : String, module_id : String? = "mod-1", system_id : String? = "sys-1", facts = nil) : IncidentReport
     event = IncidentEvent.new(
       source: IncidentSource::Ticket,
       severity: IncidentSeverity::Warning,
@@ -11,12 +11,49 @@ module AISupportAgent
       module_id: module_id,
       system_id: system_id
     )
-    context = PlaceOSContext.static([Evidence.new(source: "placeos_rest_api", message: "fixture evidence")])
+    data = facts ? JSON.parse(facts.to_json) : nil
+    context = PlaceOSContext.static([Evidence.new(source: "placeos_rest_api", message: "fixture evidence", data: data)])
     catalog = WorkflowCatalog.from_environment
     WorkflowRunner.new(catalog, DiagnosticEngine.new(context, AIReporter.disabled)).report_for(Incident.new("aisup-sd", event, Time.utc))
   end
 
   describe "service desk shaped diagnostics" do
+    it "reclassifies a ticket from the module flags when the text matched nothing" do
+      text = "Zoom functionality has stopped working in Sydney Room 2. Can you find out why?"
+
+      stopped = AISupportAgent.sd_report(text, facts: {running: false, connected: true, ignore_connected: false, has_runtime_error: false})
+      stopped.classification.value.should eq "module_stopped"
+      stopped.confidence.should be >= 0.8
+      stopped.status.escalated?.should be_false
+      stopped.investigation.map(&.name).should contain "reclassify_from_evidence"
+      stopped.investigation.map(&.name).should contain "remediation:start-stopped-module"
+      stopped.remediation_proposal.not_nil!.action.should contain "Start the stopped module"
+      stopped.next_steps.join(" ").should contain "press Start"
+
+      disconnected = AISupportAgent.sd_report(text, facts: {running: true, connected: false, ignore_connected: false, has_runtime_error: false})
+      disconnected.classification.value.should eq "module_disconnected"
+      disconnected.status.escalated?.should be_false
+      disconnected.remediation_proposal.should be_nil
+
+      crashed = AISupportAgent.sd_report(text, facts: {running: true, connected: true, ignore_connected: false, has_runtime_error: true})
+      crashed.classification.value.should eq "runtime_error"
+      crashed.investigation.map(&.name).should contain "remediation:restart-runtime-failure"
+
+      healthy = AISupportAgent.sd_report(text, facts: {running: true, connected: true, ignore_connected: false, has_runtime_error: false})
+      healthy.classification.value.should eq "unknown"
+      healthy.investigation.map(&.name).should_not contain "reclassify_from_evidence"
+
+      no_module = AISupportAgent.sd_report(text, module_id: nil, facts: {running: false})
+      no_module.classification.value.should eq "unknown"
+    end
+
+    it "keeps a text-matched classification ahead of a weaker evidence rule" do
+      report = AISupportAgent.sd_report("Display module throwing a runtime error, stacktrace attached", facts: {running: true, connected: false, ignore_connected: false, has_runtime_error: false})
+
+      report.classification.value.should eq "runtime_error"
+      report.investigation.map(&.name).should_not contain "reclassify_from_evidence"
+    end
+
     it "classifies a stalled sync module and keeps the device diagnostics for device text" do
       AISupportAgent.sd_report("Module Error Stopping Azure AD to PlaceOS User Sync. One of the modules was throwing an error and stopping the process responsible for syncing users from Azure to PlaceOS.").classification.value.should eq "sync_stalled"
       AISupportAgent.sd_report("HTTP 401 Unauthorized from the display").classification.http_auth?.should be_true

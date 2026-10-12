@@ -52,7 +52,7 @@ Add one YAML file under `diagnostics/` conforming to `schemas/diagnostic.v1.json
 Each diagnostic procedure owns:
 
 - `classification`: the stable classification written to reports and agent runs.
-- `matches`: patterns plus optional source and required-context constraints.
+- `matches`: patterns plus optional source and required-context constraints, and optional `evidence` rules (`key` / `equals` pairs the evidence tools must return) that let the playbook take over an incident after the investigation when the text matched nothing but the facts do, such as `running: false`.
 - `steps`: ordered read-only evidence tools, dependencies, context requirements, and bounded I/O timeouts.
 - `analysis`: hypotheses, confidence policy, bounded iteration, and fallback evidence tools.
 - `guidance`: diagnostic summary and operator investigation steps.

@@ -24,7 +24,7 @@
           "tool": {
             "enum": ["module_details", "module_state", "module_error_logs", "debug_or_error_logs", "system_details", "core_loaded_processes", "module_settings", "driver_details", "system_modules", "search_consistency", "cluster_status", "platform_version"]
           },
-          "criterion": { "enum": ["tool_succeeded", "evidence_present", "runtime_error_cleared"] },
+          "criterion": { "enum": ["tool_succeeded", "evidence_present", "runtime_error_cleared", "module_running"] },
           "io_timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 60, "default": 10 },
           "requires": {
             "type": "array",

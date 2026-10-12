@@ -9,6 +9,9 @@ priority: 100
 matches:
   patterns:
     - '(?i)runtime[ _-]?error|exception|stacktrace|backtrace'
+  evidence:
+    - key: has_runtime_error
+      equals: true
 steps:
   - id: module-details
     tool: module_details

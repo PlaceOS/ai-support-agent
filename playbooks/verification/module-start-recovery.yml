@@ -1,0 +1,22 @@
+$schema: ../schemas/verification.v1.json
+schema_version: verification-procedure.v1
+id: module-start-recovery
+version: 1
+name: Verify the module is running again
+mode: verification
+checks:
+  - id: module-running
+    tool: module_details
+    criterion: module_running
+    io_timeout_seconds: 5
+    requires: [module_id]
+  - id: module-state-readable
+    tool: module_state
+    criterion: evidence_present
+    io_timeout_seconds: 5
+    requires: [module_id]
+policy:
+  retry_interval_seconds: 60
+  max_attempts: 3
+  timeout_seconds: 900
+  failure_outcome: escalate

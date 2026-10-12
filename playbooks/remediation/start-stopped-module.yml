@@ -1,0 +1,17 @@
+$schema: ../schemas/remediation.v1.json
+schema_version: remediation-procedure.v1
+id: start-stopped-module
+version: 1
+name: Start a stopped module
+mode: remediation
+priority: 100
+matches:
+  classifications: [module_stopped]
+  minimum_confidence: 0.65
+  required_context: [module_id]
+proposal:
+  action: start-module
+  risk_level: low
+  approval_required: true
+  policy_basis: The module is stopped and starting it is the standard fix; a person confirms it was not stopped on purpose before approving.
+  verification: verification:module-start-recovery@1

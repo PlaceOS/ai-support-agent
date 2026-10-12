@@ -23,6 +23,8 @@ stages:
       - diagnostic:modules-not-loaded@1
       - diagnostic:platform-pods-unhealthy@1
       - diagnostic:api-timeout@1
+      - diagnostic:module-stopped@1
+      - diagnostic:module-disconnected@1
       - diagnostic:unknown-incident@1
     transitions:
       diagnosed: propose
@@ -36,6 +38,7 @@ stages:
       - remediation:add-missing-setting@1
       - remediation:reindex-search@1
       - remediation:restart-core-service@1
+      - remediation:start-stopped-module@1
     transitions:
       proposal_created: report
       no_proposal: report
