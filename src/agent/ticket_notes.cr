@@ -38,19 +38,29 @@ module AISupportAgent
 
   # Writes what the agent found back to the service desk ticket: an internal
   # triage note with a suggested reply when a ticket arrives, and the Root cause
-  # field when a person resolves the ticket without filling it in. Never raises;
+  # field when a person resolves the ticket without filling it in. The same
+  # findings go to the support chat space as a short message. Never raises;
   # every attempt leaves a delivery record on the incident.
   module TicketNotes
     extend self
 
-    MAX_EVIDENCE   =   8
-    MAX_QUESTIONS  =   4
-    MAX_FACT_CHARS = 300
+    MAX_EVIDENCE   =    8
+    MAX_QUESTIONS  =    4
+    MAX_FACT_CHARS =  300
+    MAX_CHAT_CHARS = 3900
 
     def triage(ticket : SupportTicket, extraction : TicketExtraction, resolution : TicketResolution, report : IncidentReport) : ReportDeliveryRecord
       deliver(report, "jira:#{ticket.reference}:triage") do |client|
         client.add_comment(ticket.reference, triage_note(ticket, extraction, resolution, report), internal: true)
         201
+      end
+    end
+
+    # Posts the chat message for a new ticket to the support space.
+    def announce(ticket : SupportTicket, extraction : TicketExtraction, resolution : TicketResolution, report : IncidentReport) : ReportDeliveryRecord
+      chat = AISupportAgent.google_chat
+      attempt(report, "google-chat:#{ticket.reference}", "nothing to send", chat ? nil : "Google Chat is not configured") do
+        chat.not_nil!.post(chat_message(ticket, extraction, resolution, report))
       end
     end
 
@@ -97,6 +107,39 @@ module AISupportAgent
         adf.paragraph(suggested_reply(ticket, extraction, resolution, report))
         adf.paragraph("Internal note from the agent. Nothing on the system was changed.")
       end
+    end
+
+    # The chat message for a new ticket: what was read, what matched, the likely cause and the recommended resolution.
+    # Google Chat text formatting: *bold*, _italic_, <url|label>.
+    def chat_message(ticket : SupportTicket, extraction : TicketExtraction, resolution : TicketResolution, report : IncidentReport) : String
+      lines = ["*New service desk ticket #{ticket.reference}: #{ticket.summary}*"]
+      meta = [] of String
+      meta << "<#{ticket.url}|Open in Jira>" if ticket.url
+      meta << "reporter #{ticket.reporter_name}" if ticket.reporter_name
+      meta << "category #{extraction.category}"
+      meta << "environment #{extraction.environment || "not stated"}"
+      meta << "urgency #{extraction.urgency || "medium"}"
+      lines << meta.join(" · ")
+      lines << ""
+      lines << "*Read as:* #{extraction.summary || ticket.summary}"
+      lines << "*Match:* #{match_line(resolution, report)}"
+      lines << "*Likely cause:* #{likely_cause(report)} (classification #{report.classification}, confidence #{report.confidence.round(2)})"
+      facts = facts(report).first(5)
+      unless facts.empty?
+        lines << "*Evidence:*"
+        facts.each { |fact| lines << "• #{fact}" }
+      end
+      steps = report.next_steps.first(5)
+      proposal = report.remediation_proposal
+      steps << "Proposed, approval required: #{proposal.action} (risk #{proposal.risk_level})" if proposal
+      unless steps.empty?
+        lines << "*Recommended resolution:*"
+        steps.each { |step| lines << "• #{step}" }
+      end
+      lines << "*Status:* #{status_line(report)}"
+      lines << "_Incident #{report.incident_id}. The full note is on the ticket. Nothing on the system was changed._"
+      text = lines.join("\n")
+      text.size > MAX_CHAT_CHARS ? text[0, MAX_CHAT_CHARS - 1] + "…" : text
     end
 
     # A public reply a person can send as is: acknowledgement, what was understood, and the questions a support engineer would ask.
@@ -177,6 +220,10 @@ module AISupportAgent
       facts.uniq.first(MAX_EVIDENCE)
     end
 
+    private def likely_cause(report : IncidentReport) : String
+      (report.ai_summary || report.decision.try(&.hypotheses.first?) || report.summary).rstrip(".")
+    end
+
     private def match_line(resolution : TicketResolution, report : IncidentReport) : String
       if report.module_id
         "Matched module #{report.module_name || report.module_id} (#{report.module_id})#{report.system_id ? " in system #{report.system_id}" : ""} by #{resolution.method}"
@@ -203,24 +250,40 @@ module AISupportAgent
       value.try(&.as_a?).try(&.compact_map(&.as_s?))
     end
 
-    # Runs the write against the configured client and records the outcome on the incident.
+    # Runs the write against the configured Jira client and records the outcome on the incident.
     # The block returns the HTTP status to record, or nil when there was nothing to do.
     private def deliver(report : IncidentReport, destination : String, & : JiraClient -> Int32?) : ReportDeliveryRecord
-      record = unless client = AISupportAgent.jira_client
-        ReportDeliveryRecord.new(incident_id: report.incident_id, status: ReportDeliveryStatus::Skipped, destination: destination, attempted_at: Time.utc, error: "Jira is not configured")
-      else
-        begin
-          if status = yield client
-            ReportDeliveryRecord.new(incident_id: report.incident_id, status: ReportDeliveryStatus::Delivered, destination: destination, attempted_at: Time.utc, response_status: status)
-          else
-            ReportDeliveryRecord.new(incident_id: report.incident_id, status: ReportDeliveryStatus::Skipped, destination: destination, attempted_at: Time.utc, error: "the field is already filled in")
-          end
-        rescue error
-          AISupportAgent::Log.warn(exception: error) { "writing to the service desk ticket failed" }
-          ReportDeliveryRecord.new(incident_id: report.incident_id, status: ReportDeliveryStatus::Failed, destination: destination, attempted_at: Time.utc, response_status: error.as?(JiraClient::Error).try(&.status), error: "#{error.class}: #{error.message}")
-        end
+      client = AISupportAgent.jira_client
+      attempt(report, destination, "the field is already filled in", client ? nil : "Jira is not configured") do
+        yield client.not_nil!
       end
+    end
+
+    # Records one delivery attempt on the incident. `skipped` names why nothing is sent; otherwise the
+    # block runs and returns the HTTP status to record, or nil when there was nothing to do.
+    private def attempt(report : IncidentReport, destination : String, nothing_to_do : String, skipped : String?, & : -> Int32?) : ReportDeliveryRecord
+      record = if skipped
+                 ReportDeliveryRecord.new(incident_id: report.incident_id, status: ReportDeliveryStatus::Skipped, destination: destination, attempted_at: Time.utc, error: skipped)
+               else
+                 begin
+                   if status = yield
+                     ReportDeliveryRecord.new(incident_id: report.incident_id, status: ReportDeliveryStatus::Delivered, destination: destination, attempted_at: Time.utc, response_status: status)
+                   else
+                     ReportDeliveryRecord.new(incident_id: report.incident_id, status: ReportDeliveryStatus::Skipped, destination: destination, attempted_at: Time.utc, error: nothing_to_do)
+                   end
+                 rescue error
+                   AISupportAgent::Log.warn(exception: error) { "delivery to #{destination} failed" }
+                   ReportDeliveryRecord.new(incident_id: report.incident_id, status: ReportDeliveryStatus::Failed, destination: destination, attempted_at: Time.utc, response_status: http_status(error), error: "#{error.class}: #{error.message}")
+                 end
+               end
       AISupportAgent.deliveries.save(record)
+    end
+
+    private def http_status(error : Exception) : Int32?
+      case error
+      when JiraClient::Error       then error.status
+      when GoogleChatClient::Error then error.status
+      end
     end
   end
 end

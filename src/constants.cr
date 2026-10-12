@@ -30,6 +30,8 @@ module AISupportAgent
   JIRA_API_TOKEN        = ENV["JIRA_API_TOKEN"]?.presence
   JIRA_ROOT_CAUSE_FIELD = ENV["JIRA_ROOT_CAUSE_FIELD"]?.presence || "customfield_10035"
 
+  GOOGLE_CHAT_WEBHOOK_URL = ENV["GOOGLE_CHAT_WEBHOOK_URL"]?.presence
+
   REPORT_WEBHOOK_URL    = ENV["REPORT_WEBHOOK_URL"]?.presence
   REPORT_EMAIL_TO       = ENV["REPORT_EMAIL_TO"]?.to_s.split(',').compact_map(&.strip.presence)
   REPORT_TEMPLATE_ID    = ENV["REPORT_TEMPLATE_ID"]?.presence || "operator-report"

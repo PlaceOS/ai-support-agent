@@ -17,6 +17,14 @@ module AISupportAgent
     AISupportAgent.jira_client = previous
   end
 
+  def self.with_google_chat(client : GoogleChatClient?, &)
+    previous = AISupportAgent.google_chat
+    AISupportAgent.google_chat = client
+    yield
+  ensure
+    AISupportAgent.google_chat = previous
+  end
+
   def self.post_note_ticket(ticket)
     client.post("/api/ai-support/v1/tickets/", body: ticket.to_json, headers: HTTP::Headers{"Content-Type" => "application/json"})
   end
@@ -60,6 +68,66 @@ module AISupportAgent
 
         AISupportAgent.post_note_ticket({reference: "SD-NOTE-1", summary: "Core Pods CrashLoopBackOff Causing System Slowness", event: "commented"}).status_code.should eq 202
         captured.size.should eq 1
+      end
+    end
+
+    it "posts the findings to the support chat space when a ticket arrives" do
+      AISupportAgent.stub_placeos_for_notes
+      WebMock.stub(:post, "http://jira.test/rest/api/3/issue/SD-NOTE-4/comment").to_return(status: 201, body: {id: "1"}.to_json)
+      posted = [] of String
+      WebMock.stub(:post, "https://chat.googleapis.com/v1/spaces/AAAA/messages").with(query: {"key" => "k", "token" => "t"}).to_return do |request|
+        posted << (JSON.parse(request.body.try(&.gets_to_end) || "{}")["text"]?.try(&.as_s?) || "")
+        HTTP::Client::Response.new(200, body: {name: "spaces/AAAA/messages/1"}.to_json)
+      end
+
+      chat = GoogleChatClient.new("https://chat.googleapis.com/v1/spaces/AAAA/messages?key=k&token=t")
+      AISupportAgent.with_jira_client(JiraClient.new("http://jira.test", "agent@example.test", "token")) do
+        AISupportAgent.with_google_chat(chat) do
+          result = AISupportAgent.post_note_ticket({
+            reference:     "SD-NOTE-4",
+            summary:       "Core Pods CrashLoopBackOff Causing System Slowness",
+            description:   "core-0 restarts every few minutes and the module lists keep spinning.",
+            reporter_name: "Jega Selvanayagam",
+            url:           "http://jira.test/browse/SD-NOTE-4",
+          })
+          result.status_code.should eq 202
+          report = IncidentReport.from_json(result.body)
+
+          posted.size.should eq 1
+          text = posted.first
+          text.should start_with "*New service desk ticket SD-NOTE-4: Core Pods CrashLoopBackOff Causing System Slowness*"
+          text.should contain "<http://jira.test/browse/SD-NOTE-4|Open in Jira>"
+          text.should contain "reporter Jega Selvanayagam"
+          text.should contain "*Read as:*"
+          text.should contain "*Likely cause:*"
+          text.should contain "classification platform_pods_unhealthy"
+          text.should contain "*Recommended resolution:*"
+          text.should contain "*Status:* Escalated"
+          text.should contain report.incident_id
+          text.size.should be <= TicketNotes::MAX_CHAT_CHARS
+
+          chat_delivery = AISupportAgent.deliveries.for_incident(report.incident_id).find(&.destination.==("google-chat:SD-NOTE-4")).not_nil!
+          chat_delivery.status.delivered?.should be_true
+          chat_delivery.response_status.should eq 200
+
+          AISupportAgent.post_note_ticket({reference: "SD-NOTE-4", summary: "Core Pods CrashLoopBackOff Causing System Slowness", event: "commented"}).status_code.should eq 202
+          posted.size.should eq 1
+        end
+      end
+    end
+
+    it "records a skipped chat delivery when no space is configured" do
+      AISupportAgent.stub_placeos_for_notes
+      AISupportAgent.with_jira_client(nil) do
+        AISupportAgent.with_google_chat(nil) do
+          result = AISupportAgent.post_note_ticket({reference: "SD-NOTE-5", summary: "Display offline in Boardroom 2", description: "mod-123456789 is not responding"})
+          result.status_code.should eq 202
+          report = IncidentReport.from_json(result.body)
+
+          chat_delivery = AISupportAgent.deliveries.for_incident(report.incident_id).find(&.destination.==("google-chat:SD-NOTE-5")).not_nil!
+          chat_delivery.status.skipped?.should be_true
+          chat_delivery.error.should eq "Google Chat is not configured"
+        end
       end
     end
 

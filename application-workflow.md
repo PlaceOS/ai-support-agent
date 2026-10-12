@@ -58,7 +58,7 @@ The runtime-error changefeed consumes module model changes already produced by t
 
 ### Service Desk Write-Back
 
-When Jira is configured, a new ticket incident posts an internal triage note on the ticket (what was read, what matched, classification, evidence, next steps, and a suggested reply with the questions a support engineer asks first), and a ticket a person resolved without a Root cause gets the field filled from the report. The agent never changes a ticket's status or sends a public reply; a person does. Each write is a delivery record on the incident.
+When Jira is configured, a new ticket incident posts an internal triage note on the ticket (what was read, what matched, classification, evidence, next steps, and a suggested reply with the questions a support engineer asks first), and a ticket a person resolved without a Root cause gets the field filled from the report. The agent never changes a ticket's status or sends a public reply; a person does. Each write is a delivery record on the incident. When `GOOGLE_CHAT_WEBHOOK_URL` is set, the same new-ticket findings are also posted to that Google Chat space as one message: what was read, what matched, the likely cause with classification and confidence, the evidence, the recommended resolution and the escalation status. Chat deliveries are recorded on the incident as `google-chat:<ticket>`.
 
 ### Operator-Driven Follow-Up
 
